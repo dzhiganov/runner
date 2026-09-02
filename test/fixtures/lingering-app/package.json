@@ -1,0 +1,1 @@
+{ "name": "lingering-app", "private": true, "type": "module", "scripts": { "dev": "node parent.js" } }

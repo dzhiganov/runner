@@ -1,0 +1,18 @@
+appId: com.zhiganov.runner
+productName: Runner
+afterPack: build/after-pack.cjs
+directories:
+  buildResources: resources
+  output: release
+files:
+  - out/**
+  - package.json
+  - '!**/*.map'
+asarUnpack:
+  - '**/node_modules/node-pty/**'
+mac:
+  target:
+    - dmg
+  category: public.app-category.developer-tools
+  darkModeSupport: true
+  identity: null

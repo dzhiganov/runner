@@ -1,0 +1,12 @@
+node_modules/
+out/
+release/
+dist/
+.DS_Store
+*.log
+
+# Stale bundled output that predates the src/ layout; nothing references it.
+/index.js
+
+# Local agent/tooling state.
+.omc/

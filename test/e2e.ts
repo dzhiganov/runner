@@ -1,0 +1,632 @@
+import { createServer } from 'node:net'
+import { join } from 'node:path'
+import { userInfo } from 'node:os'
+import { ProcessManager, defaultShell } from '../src/main/process-manager.js'
+import { Orchestrator } from '../src/main/orchestrator.js'
+import { resolvePort, isPortFree, waitForPort, waitForPortsFree } from '../src/main/ports.js'
+import { migrate, validateConfig } from '../src/main/config-validate.js'
+import { buildTree, dependentsOf, findCycles, startOrder } from '../src/shared/graph.js'
+import type { ProjectConfig, ProjectRuntime } from '../src/shared/types.js'
+
+/** Run from the repo root via `npm test`. */
+const APP = join(process.cwd(), 'test', 'fixtures', 'fake-app')
+const LINGERING = join(process.cwd(), 'test', 'fixtures', 'lingering-app')
+const results: string[] = []
+let failures = 0
+
+function check(name: string, ok: boolean, detail = ''): void {
+  results.push(`${ok ? '  PASS' : '  FAIL'}  ${name}${detail ? ` — ${detail}` : ''}`)
+  if (!ok) failures += 1
+}
+
+function waitFor(fn: () => boolean | Promise<boolean>, ms = 15000): Promise<boolean> {
+  const start = Date.now()
+  return new Promise((resolve) => {
+    const tick = async (): Promise<void> => {
+      if (await fn()) return resolve(true)
+      if (Date.now() - start > ms) return resolve(false)
+      setTimeout(tick, 100)
+    }
+    void tick()
+  })
+}
+
+async function main(): Promise<void> {
+  // --- config validation -------------------------------------------------
+  const bad = validateConfig({ projects: [{ name: '', path: '', runCommand: '', port: [0] }] })
+  check('validation rejects an empty project', !bad.ok && bad.issues.length >= 4)
+
+  const good = validateConfig({
+    projects: [{ name: 'a', path: '~/x', runCommand: 'npm run dev', port: [3000, 3000, 3001] }]
+  })
+  check(
+    'validation dedupes ports and assigns an id',
+    good.ok && good.config.projects[0].port!.join(',') === '3000,3001' && !!good.config.projects[0].id
+  )
+
+  const dupes = validateConfig({
+    projects: [
+      { name: 'a', path: '~/x', runCommand: 'c' },
+      { name: 'a', path: '~/y', runCommand: 'c' }
+    ]
+  })
+  check('validation rejects duplicate names', !dupes.ok)
+
+  // --- shell selection ---------------------------------------------------
+  // Regression: an inherited SHELL (from `open`, a launcher, a parent script)
+  // must not win over the user's real login shell, or commands run with a
+  // different PATH than the terminal they were tested in.
+  const realShell = userInfo().shell
+  process.env.SHELL = '/bin/definitely-not-my-shell'
+  check(
+    'defaultShell ignores an inherited $SHELL in favour of the login shell',
+    defaultShell() === realShell,
+    `got ${defaultShell()}, login shell is ${realShell}`
+  )
+  delete process.env.SHELL
+  check('defaultShell still resolves with no $SHELL at all', defaultShell() === realShell)
+
+  // --- port resolution ---------------------------------------------------
+  // 3000 held dual-stack (Node's default, like most dev servers), 3001 held on
+  // IPv4 loopback only — both must read as busy.
+  const dualStack = createServer()
+  dualStack.listen(3000)
+  const v4Only = createServer()
+  v4Only.listen(3001, '127.0.0.1')
+  const blockers = [dualStack, v4Only]
+  await new Promise((r) => setTimeout(r, 400))
+
+  check('isPortFree sees a dual-stack listener', (await isPortFree(3000)) === false)
+  check('isPortFree sees an IPv4-loopback-only listener', (await isPortFree(3001)) === false)
+  check('isPortFree sees a genuinely free port', (await isPortFree(3002)) === true)
+  const fellBack = await resolvePort([3000, 3001, 3002])
+  check('resolvePort skips busy ports', fellBack === 3002, `got ${fellBack}`)
+
+  const exhausted = await resolvePort([3000, 3001])
+  check(
+    'resolvePort returns null when every listed port is busy',
+    exhausted === null,
+    `got ${exhausted}`
+  )
+
+  check(
+    'waitForPortsFree gives up on a port nobody releases',
+    (await waitForPortsFree([3000], 500)) === false
+  )
+  setTimeout(() => v4Only.close(), 300)
+  check('waitForPortsFree resolves once a port is released', await waitForPortsFree([3001], 4000))
+  v4Only.listen(3001, '127.0.0.1')
+  await new Promise((r) => setTimeout(r, 300))
+
+  // --- migrating away from Docker projects --------------------------------
+  // An old config's Docker project has no runCommand of its own, so without a
+  // migration it would fail validation and read to the user as data loss.
+  const migrated = validateConfig(
+    migrate({
+      projects: [
+        {
+          id: 'stack',
+          name: 'stack',
+          path: '~/x',
+          kind: 'docker',
+          docker: { file: 'compose.yaml', services: ['api'], build: true }
+        }
+      ]
+    })
+  )
+  check(
+    'an old Docker project migrates into a plain command',
+    migrated.ok &&
+      migrated.config.projects[0].runCommand ===
+        "docker compose -f 'compose.yaml' up --build 'api'",
+    migrated.ok ? '' : JSON.stringify(migrated.issues)
+  )
+  check(
+    'migration drops the kind and docker keys',
+    migrated.ok && !('kind' in migrated.config.projects[0]) && !('docker' in migrated.config.projects[0])
+  )
+
+  const migratedContainer = validateConfig(
+    migrate({
+      projects: [
+        { name: 'pg', path: '~/x', kind: 'docker', docker: { mode: 'container', container: 'my pg' } }
+      ]
+    })
+  )
+  check(
+    'a single-container project migrates to start plus logs',
+    migratedContainer.ok &&
+      migratedContainer.config.projects[0].runCommand ===
+        "docker start 'my pg' && docker logs -f --tail 200 'my pg'",
+    migratedContainer.ok ? '' : JSON.stringify(migratedContainer.issues)
+  )
+
+  const keptCommand = migrate({
+    projects: [{ name: 'x', path: '~/x', kind: 'docker', runCommand: 'docker compose up db' }]
+  }) as { projects: { runCommand: string }[] }
+  check(
+    'a Docker project with its own command keeps it',
+    keptCommand.projects[0].runCommand === 'docker compose up db'
+  )
+
+  // --- auto-open and auto-restart validation ------------------------------
+  const autos = validateConfig({
+    projects: [
+      {
+        name: 'a',
+        path: '~/x',
+        runCommand: 'c',
+        autoOpen: true,
+        autoRestart: { enabled: true, maxAttempts: 5, delayMs: 500 }
+      }
+    ]
+  })
+  check(
+    'autoOpen and autoRestart survive validation',
+    autos.ok &&
+      autos.config.projects[0].autoOpen === true &&
+      autos.config.projects[0].autoRestart?.maxAttempts === 5 &&
+      autos.config.projects[0].autoRestart?.delayMs === 500,
+    autos.ok ? '' : JSON.stringify(autos.issues)
+  )
+
+  const shorthand = validateConfig({
+    projects: [{ name: 'a', path: '~/x', runCommand: 'c', autoRestart: true }]
+  })
+  check(
+    '`autoRestart: true` is read as enabled with the defaults',
+    shorthand.ok && shorthand.config.projects[0].autoRestart?.enabled === true
+  )
+
+  const offRestart = validateConfig({
+    projects: [{ name: 'a', path: '~/x', runCommand: 'c', autoRestart: false }]
+  })
+  check(
+    '`autoRestart: false` leaves nothing behind',
+    offRestart.ok && offRestart.config.projects[0].autoRestart === undefined
+  )
+
+  const badAttempts = validateConfig({
+    projects: [{ name: 'a', path: '~/x', runCommand: 'c', autoRestart: { enabled: true, maxAttempts: 0 } }]
+  })
+  check('an out-of-range maxAttempts is rejected', !badAttempts.ok)
+
+  const badAutoOpen = validateConfig({
+    projects: [{ name: 'a', path: '~/x', runCommand: 'c', autoOpen: 'yes' }]
+  })
+  check('a non-boolean autoOpen is rejected', !badAutoOpen.ok)
+
+  const commandNeedsCommand = validateConfig({ projects: [{ name: 'x', path: '~/x' }] })
+  check('a command project still requires runCommand', !commandNeedsCommand.ok)
+
+  // --- dependency validation --------------------------------------------
+  const selfDep = validateConfig({
+    projects: [{ id: 'a', name: 'a', path: '~/x', runCommand: 'c', dependsOn: ['a'] }]
+  })
+  check('a project cannot depend on itself', !selfDep.ok)
+
+  const ghostDep = validateConfig({
+    projects: [{ id: 'a', name: 'a', path: '~/x', runCommand: 'c', dependsOn: ['nope'] }]
+  })
+  check('a dependency on a missing project is rejected', !ghostDep.ok)
+
+  const cyclic = validateConfig({
+    projects: [
+      { id: 'a', name: 'a', path: '~/x', runCommand: 'c', dependsOn: ['b'] },
+      { id: 'b', name: 'b', path: '~/x', runCommand: 'c', dependsOn: ['c'] },
+      { id: 'c', name: 'c', path: '~/x', runCommand: 'c', dependsOn: ['a'] }
+    ]
+  })
+  check(
+    'a dependency cycle is rejected and named',
+    !cyclic.ok && cyclic.issues.some((i) => i.message.includes('Dependency cycle')),
+    cyclic.ok ? '' : cyclic.issues.map((i) => i.message).join(' | ')
+  )
+
+  const chain = validateConfig({
+    projects: [
+      { id: 'web', name: 'web', path: '~/x', runCommand: 'c', dependsOn: ['api', 'api'] },
+      { id: 'api', name: 'api', path: '~/x', runCommand: 'c', dependsOn: ['db'] },
+      { id: 'db', name: 'db', path: '~/x', runCommand: 'c' }
+    ]
+  })
+  check(
+    'a valid chain survives validation with deduped edges',
+    chain.ok && chain.config.projects[0].dependsOn!.length === 1,
+    chain.ok ? '' : JSON.stringify(chain.issues)
+  )
+
+  const readinessBad = validateConfig({
+    projects: [{ name: 'a', path: '~/x', runCommand: 'c', readiness: { logPattern: '([' } }]
+  })
+  check('an invalid readiness regex is rejected', !readinessBad.ok)
+
+  // --- graph shape -------------------------------------------------------
+  const graph: ProjectConfig[] = [
+    { id: 'web', name: 'web', path: APP, runCommand: 'c', dependsOn: ['api'] },
+    { id: 'api', name: 'api', path: APP, runCommand: 'c', dependsOn: ['db'] },
+    { id: 'db', name: 'db', path: APP, runCommand: 'c' },
+    { id: 'solo', name: 'solo', path: APP, runCommand: 'c' }
+  ]
+  check(
+    'startOrder returns dependencies first',
+    startOrder(graph, 'web').map((p) => p.id).join(',') === 'db,api,web',
+    startOrder(graph, 'web').map((p) => p.id).join(',')
+  )
+  check('dependentsOf finds the direct parent', dependentsOf(graph, 'db').join(',') === 'api')
+
+  const tree = buildTree(graph)
+  check(
+    'the tree roots are the projects nothing depends on',
+    tree.map((n) => n.project.id).join(',') === 'web,solo',
+    tree.map((n) => n.project.id).join(',')
+  )
+  check(
+    'the tree nests dependencies under their dependents',
+    tree[0].children[0].project.id === 'api' &&
+      tree[0].children[0].children[0].project.id === 'db' &&
+      tree[0].children[0].children[0].depth === 2
+  )
+  check('findCycles is quiet on an acyclic graph', findCycles(graph).length === 0)
+
+  // A cycle has no root at all, so the tree must still surface its members
+  // rather than silently dropping them from the sidebar.
+  const loop: ProjectConfig[] = [
+    { id: 'a', name: 'a', path: APP, runCommand: 'c', dependsOn: ['b'] },
+    { id: 'b', name: 'b', path: APP, runCommand: 'c', dependsOn: ['a'] }
+  ]
+  check('findCycles reports a two-node loop once', findCycles(loop).length === 1)
+  // A cycle has no root, so it is entered at an arbitrary member and unrolled
+  // once. What matters is that both projects stay reachable in the sidebar.
+  const loopTree = buildTree(loop)
+  const loopIds = new Set<string>()
+  const walk = (nodes: ReturnType<typeof buildTree>): void => {
+    for (const node of nodes) {
+      loopIds.add(node.project.id)
+      walk(node.children)
+    }
+  }
+  walk(loopTree)
+  check(
+    'buildTree still shows every project in a cyclic config',
+    loopIds.size === 2,
+    [...loopIds].join(',')
+  )
+  check('buildTree does not recurse forever on a cycle', loopTree[0].children.length === 1)
+
+  // --- real process lifecycle -------------------------------------------
+  const manager = new ProcessManager()
+  const runtimes = new Map<string, ProjectRuntime>()
+  manager.on('runtime', (r) => runtimes.set(r.id, r))
+  let output = ''
+  manager.on('data', (_id, chunk) => (output += chunk))
+
+  const project: ProjectConfig = {
+    id: 'p1',
+    name: 'fake app',
+    path: APP,
+    runCommand: 'npm run dev',
+    port: [3000, 3001, 3002],
+    env: { GREETING: 'hello-from-runner' }
+  }
+
+  await manager.start(project)
+  const started = await waitFor(() => output.includes('ready on http://localhost:'))
+  check('project starts and reaches "ready"', started)
+
+  const rt = runtimes.get('p1')!
+  check('runtime reports running', rt.status === 'running', rt.status)
+  check('port fell back past the two busy ports', rt.port === 3002, `got ${rt.port}`)
+  check('child actually bound the assigned port', output.includes('ready on http://localhost:3002'))
+  check('custom env var reached the child', output.includes('GREETING=hello-from-runner'))
+  check('busy-port notice was printed', output.includes('is busy — using 3002'))
+  check(
+    'port was detected from the child output',
+    rt.detectedPorts.includes(3002),
+    `got [${rt.detectedPorts}]`
+  )
+  check('port 3002 is now occupied by the child', (await isPortFree(3002)) === false)
+
+  // restart: same manager, process should come back up
+  output = ''
+  await manager.restart(project)
+  const restarted = await waitFor(() => output.includes('ready on http://localhost:'))
+  check('restart brings the project back up', restarted)
+  const rt2 = runtimes.get('p1')!
+  check('restart reports running again', rt2.status === 'running', rt2.status)
+  check('restart got a fresh pid', rt2.pid !== rt.pid, `${rt.pid} -> ${rt2.pid}`)
+
+  // stop
+  manager.stop('p1')
+  const stopped = await waitFor(() => runtimes.get('p1')?.status === 'stopped')
+  check('stop reaches "stopped"', stopped, runtimes.get('p1')?.status)
+  check('SIGTERM was delivered to the child', output.includes('got SIGTERM'))
+  await new Promise((r) => setTimeout(r, 600))
+  check('port is released after stop', (await isPortFree(3002)) === true)
+  check('no sessions left running', manager.runningCount() === 0)
+
+  // --- restart against a port the project itself is still holding --------
+  // The regression: killing the process group ends the shell Runner watches,
+  // but the dev server it spawned keeps the socket for a moment longer. A
+  // restart that spawns the instant the PTY exits used to find its own port
+  // taken and report "all ports are in use" — so the user had to click twice.
+  const lingering: ProjectConfig = {
+    id: 'p6',
+    name: 'lingering',
+    path: LINGERING,
+    runCommand: 'npm run dev',
+    port: [3020]
+  }
+  let lingeringOutput = ''
+  const lingeringManager = new ProcessManager()
+  const lingeringRuntimes = new Map<string, ProjectRuntime>()
+  lingeringManager.on('runtime', (r) => lingeringRuntimes.set(r.id, r))
+  lingeringManager.on('data', (_id, chunk) => (lingeringOutput += chunk))
+
+  await lingeringManager.start(lingering)
+  await waitFor(() => lingeringOutput.includes('lingering app ready on http://localhost:3020'))
+  lingeringOutput = ''
+  await lingeringManager.restart(lingering)
+  const cameBack = await waitFor(
+    () => lingeringOutput.includes('lingering app ready on http://localhost:3020'),
+    20000
+  )
+  check('restart survives the project still holding its own port', cameBack, lingeringOutput.slice(-300))
+  check(
+    'restart does not report the port as busy',
+    !lingeringOutput.includes('All ports are in use'),
+    lingeringOutput.slice(-300)
+  )
+  check(
+    'restart came back on the same port rather than falling forward',
+    lingeringRuntimes.get('p6')?.port === 3020,
+    `${lingeringRuntimes.get('p6')?.port}`
+  )
+  check(
+    'restart says what it is waiting for',
+    lingeringOutput.includes('waiting for 3020 to be released')
+  )
+  await lingeringManager.stopAll()
+  await waitForPortsFree([3020], 5000)
+
+  // --- auto-open ---------------------------------------------------------
+  // The URL must not be handed over until the port actually answers, or the
+  // browser opens on a connection error and the user refreshes by hand.
+  const openManager = new ProcessManager()
+  const opened: string[] = []
+  let servingWhenOpened: boolean | null = null
+  openManager.on('open', (_id, url) => {
+    opened.push(url)
+  })
+  const openProject: ProjectConfig = {
+    id: 'p7',
+    name: 'opener',
+    path: APP,
+    runCommand: 'npm run dev',
+    port: [3021],
+    autoOpen: true,
+    protocol: 'https'
+  }
+  await openManager.start(openProject)
+  const didOpen = await waitFor(() => opened.length > 0)
+  if (didOpen) servingWhenOpened = !(await isPortFree(3021))
+  check('auto-open fires once the project is up', didOpen, opened.join(','))
+  check('auto-open uses the configured protocol and port', opened[0] === 'https://localhost:3021', opened[0])
+  check('auto-open waited for the port to answer', servingWhenOpened === true)
+  await openManager.stopAll()
+
+  const quietManager = new ProcessManager()
+  const quietOpens: string[] = []
+  quietManager.on('open', (_id, url) => quietOpens.push(url))
+  await quietManager.start({ ...openProject, id: 'p8', name: 'quiet', autoOpen: false, port: [3022] })
+  await new Promise((r) => setTimeout(r, 1500))
+  check('nothing is opened when auto-open is off', quietOpens.length === 0, quietOpens.join(','))
+  await quietManager.stopAll()
+
+  // --- auto-restart ------------------------------------------------------
+  const crashManager = new ProcessManager()
+  const crashRuntimes = new Map<string, ProjectRuntime>()
+  crashManager.on('runtime', (r) => crashRuntimes.set(r.id, r))
+  let crashOutput = ''
+  crashManager.on('data', (_id, chunk) => (crashOutput += chunk))
+  const crasher: ProjectConfig = {
+    id: 'p9',
+    name: 'crasher',
+    path: APP,
+    runCommand: 'exit 7',
+    autoRestart: { enabled: true, maxAttempts: 2, delayMs: 100 }
+  }
+
+  await crashManager.start(crasher)
+  const gaveUp = await waitFor(() => crashOutput.includes('auto-restart gave up'), 20000)
+  check('auto-restart retries a crash and eventually gives up', gaveUp, crashOutput.slice(-300))
+  check(
+    'auto-restart honours the attempt budget',
+    (crashOutput.match(/auto-restarting in/g) ?? []).length === 2,
+    `${(crashOutput.match(/auto-restarting in/g) ?? []).length} attempts`
+  )
+  check(
+    'the retry counter is cleared once Runner gives up',
+    crashRuntimes.get('p9')?.restartAttempts === 0,
+    `${crashRuntimes.get('p9')?.restartAttempts}`
+  )
+  check('the project is left reported as crashed', crashRuntimes.get('p9')?.status === 'exited')
+
+  // A stop the user asked for is not a crash, so nothing should come back.
+  const cleanManager = new ProcessManager()
+  let cleanOutput = ''
+  cleanManager.on('data', (_id, chunk) => (cleanOutput += chunk))
+  const watched: ProjectConfig = {
+    id: 'p10',
+    name: 'watched',
+    path: APP,
+    runCommand: 'npm run dev',
+    port: [3023],
+    autoRestart: { enabled: true, maxAttempts: 3, delayMs: 100 }
+  }
+  await cleanManager.start(watched)
+  await waitFor(() => cleanOutput.includes('ready on http://localhost:3023'))
+  cleanManager.stop('p10')
+  await waitFor(() => !cleanManager.isRunning('p10'))
+  await new Promise((r) => setTimeout(r, 1200))
+  check('a deliberate stop is not auto-restarted', !cleanManager.isRunning('p10'))
+  check(
+    'a deliberate stop schedules no retry',
+    !cleanOutput.includes('auto-restarting in'),
+    cleanOutput.slice(-200)
+  )
+  await cleanManager.stopAll()
+
+  // --- port availability for the UI --------------------------------------
+  const busyProject: ProjectConfig = { ...project, id: 'p4', name: 'busy', port: [3000, 3001] }
+  await manager.refreshPortAvailability([busyProject])
+  check('portsBusy set when every listed port is taken', runtimes.get('p4')?.portsBusy === true)
+
+  // Read from the manager, not the event map: an unchanged value emits nothing,
+  // which is deliberate — the UI must not be spammed every poll.
+  const freeProject: ProjectConfig = { ...project, id: 'p5', name: 'free', port: [3002] }
+  await manager.refreshPortAvailability([freeProject])
+  check('portsBusy clear while a listed port is free', manager.runtime('p5').portsBusy === false)
+  check('an unchanged portsBusy emits no runtime event', !runtimes.has('p5'))
+
+  await manager.start(busyProject)
+  check(
+    'start refuses when every listed port is taken',
+    runtimes.get('p4')?.status === 'error' && runtimes.get('p4')?.portsBusy === true,
+    `${runtimes.get('p4')?.status} / ${runtimes.get('p4')?.message}`
+  )
+
+  // missing directory
+  await manager.start({ id: 'p2', name: 'ghost', path: '/no/such/dir', runCommand: 'ls' })
+  check('missing directory reports an error', runtimes.get('p2')?.status === 'error')
+
+  // non-zero exit is surfaced as a crash
+  await manager.start({ id: 'p3', name: 'boom', path: APP, runCommand: 'exit 3' })
+  const crashed = await waitFor(() => runtimes.get('p3')?.status === 'exited')
+  check('non-zero exit is reported as crashed', crashed, runtimes.get('p3')?.status)
+  check('exit code is captured', runtimes.get('p3')?.exitCode === 3, `${runtimes.get('p3')?.exitCode}`)
+
+  // stopAll tears everything down
+  await manager.start(project)
+  await waitFor(() => manager.runningCount() === 1)
+  await manager.stopAll()
+  check('stopAll leaves nothing running', manager.runningCount() === 0)
+
+  // --- dependency trees, for real ----------------------------------------
+  // web depends on api depends on db; each is the fake dev server on its own
+  // port, so "ready" means a socket actually answering, not just a live pid.
+  const treeProjects: ProjectConfig[] = [
+    { id: 'db', name: 'db', path: APP, runCommand: 'npm run dev', port: [3010] },
+    { id: 'api', name: 'api', path: APP, runCommand: 'npm run dev', port: [3011], dependsOn: ['db'] },
+    { id: 'web', name: 'web', path: APP, runCommand: 'npm run dev', port: [3012], dependsOn: ['api'] }
+  ]
+  const treeManager = new ProcessManager()
+  const orchestrator = new Orchestrator(treeManager, () => treeProjects)
+  const startSequence: string[] = []
+  treeManager.on('runtime', (r) => {
+    if (r.status === 'running' && !startSequence.includes(r.id)) startSequence.push(r.id)
+  })
+
+  const treeResult = await orchestrator.startTree('web')
+  check('startTree reports success', treeResult.ok, treeResult.message ?? '')
+  check(
+    'the whole tree came up',
+    ['db', 'api', 'web'].every((id) => treeManager.isRunning(id)),
+    startSequence.join(',')
+  )
+  check(
+    'dependencies came up before their dependents',
+    startSequence.join(',') === 'db,api,web',
+    startSequence.join(',')
+  )
+  // The root is not waited on — nothing depends on it — so give it the moment
+  // it needs to bind before asserting the whole tree is actually serving.
+  const rootServing = await waitFor(async () => !(await isPortFree(3012)))
+  check('every project in the tree is serving', rootServing)
+  check(
+    'nothing is left waiting once the tree is up',
+    treeProjects.every((p) => treeManager.runtime(p.id).waitingFor === null)
+  )
+
+  // Stopping the root must not take down a dependency another live project
+  // still needs, so give api a second dependent and stop only that one.
+  treeProjects.push({
+    id: 'other',
+    name: 'other',
+    path: APP,
+    runCommand: 'npm run dev',
+    port: [3013],
+    dependsOn: ['api']
+  })
+  await orchestrator.startTree('other')
+  await orchestrator.stopTree('other')
+  await waitFor(() => !treeManager.isRunning('other'))
+  check('stopTree stops the project it was asked about', !treeManager.isRunning('other'))
+  check(
+    'stopTree leaves a dependency that another live project needs',
+    treeManager.isRunning('api') && treeManager.isRunning('db')
+  )
+
+  treeProjects.pop()
+  await orchestrator.stopTree('web')
+  const treeDown = await waitFor(() => treeManager.runningCount() === 0)
+  check('stopTree brings the whole tree down', treeDown, `${treeManager.runningCount()} left`)
+
+  // A dependency that cannot start must stop the tree rather than launch a
+  // dependent into a world where its backend does not exist.
+  const brokenProjects: ProjectConfig[] = [
+    { id: 'bad', name: 'bad', path: '/no/such/dir', runCommand: 'npm run dev' },
+    { id: 'needy', name: 'needy', path: APP, runCommand: 'npm run dev', port: [3014], dependsOn: ['bad'] }
+  ]
+  const brokenManager = new ProcessManager()
+  const brokenOrchestrator = new Orchestrator(brokenManager, () => brokenProjects)
+  const brokenResult = await brokenOrchestrator.startTree('needy')
+  check('a failing dependency fails the tree start', !brokenResult.ok)
+  check('the dependent is never started', !brokenManager.isRunning('needy'))
+  check(
+    'the dependent explains which dependency failed',
+    brokenManager.runtime('needy').status === 'error' &&
+      (brokenManager.runtime('needy').message ?? '').includes('bad'),
+    `${brokenManager.runtime('needy').status}: ${brokenManager.runtime('needy').message}`
+  )
+  await brokenManager.stopAll()
+
+  // A log pattern is the readiness signal for anything that never binds a port.
+  const logReady: ProjectConfig[] = [
+    {
+      id: 'silent',
+      name: 'silent',
+      path: APP,
+      runCommand: 'npm run dev',
+      port: [3015],
+      readiness: { logPattern: 'ready on http', timeoutMs: 15000 }
+    },
+    { id: 'after', name: 'after', path: APP, runCommand: 'npm run dev', port: [3016], dependsOn: ['silent'] }
+  ]
+  const logManager = new ProcessManager()
+  const logOrchestrator = new Orchestrator(logManager, () => logReady)
+  const logResult = await logOrchestrator.startTree('after')
+  check('a log pattern satisfies readiness', logResult.ok, logResult.message ?? '')
+  await logManager.stopAll()
+
+  // waitForPort is what "ready" ultimately rests on.
+  const probe = createServer()
+  probe.listen(3017)
+  await new Promise((r) => setTimeout(r, 200))
+  check('waitForPort sees a live listener', (await waitForPort(3017, 2000)) === true)
+  probe.close()
+  await new Promise((r) => setTimeout(r, 200))
+  check('waitForPort gives up on a dead port', (await waitForPort(3017, 800)) === false)
+
+  await treeManager.stopAll()
+
+  blockers.forEach((s) => s.close())
+  console.log(results.join('\n'))
+  console.log(failures === 0 ? '\nALL PASS' : `\n${failures} FAILED`)
+  process.exit(failures === 0 ? 0 : 1)
+}
+
+main().catch((error) => {
+  console.error(error)
+  process.exit(1)
+})

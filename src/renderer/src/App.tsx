@@ -12,6 +12,7 @@ import ConfigEditor from './components/ConfigEditor.js'
 import DiscoverDialog from './components/DiscoverDialog.js'
 import LogView from './components/LogView.js'
 import PortConflictDialog from './components/PortConflictDialog.js'
+import CommandPalette, { buildCommands } from './components/CommandPalette.js'
 import {
   AlertIcon,
   BoxIcon,
@@ -95,6 +96,7 @@ export default function App(): React.JSX.Element {
   const [gitInfo, setGitInfo] = useState<Record<string, ProjectGit>>({})
   /** Dev servers running outside Runner, keyed by the project they belong to. */
   const [externals, setExternals] = useState<Record<string, ExternalProcess>>({})
+  const [paletteOpen, setPaletteOpen] = useState(false)
   const [now, setNow] = useState(() => Date.now())
   const [dragId, setDragId] = useState<string | null>(null)
   const [dropId, setDropId] = useState<string | null>(null)
@@ -204,7 +206,15 @@ export default function App(): React.JSX.Element {
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent): void => {
-      if (!event.metaKey || !activeId) return
+      if (!event.metaKey) return
+      // Unlike the per-project shortcuts, the palette needs no selection —
+      // reaching a project is one of the things it is for.
+      if (event.key === 'k') {
+        event.preventDefault()
+        setPaletteOpen((open) => !open)
+        return
+      }
+      if (!activeId) return
       if (event.key === 'r') {
         event.preventDefault()
         window.runner.restart(activeId)
@@ -704,6 +714,22 @@ export default function App(): React.JSX.Element {
           </div>
         )}
       </main>
+
+      {paletteOpen && (
+        <CommandPalette
+          commands={buildCommands(config.projects, runtimeFor, isLive, externals, {
+            select: (id) => {
+              setActiveId(id)
+              setShowLogs(false)
+            },
+            openLogs: () => setShowLogs(true),
+            openDiscovery: () => setDiscovering(true),
+            openEditor: (id) => setEditing({ open: true, id: id ?? activeId }),
+            openConflict: (id) => setConflictFor(id)
+          })}
+          onClose={() => setPaletteOpen(false)}
+        />
+      )}
 
       {conflictFor && (
         <PortConflictDialog

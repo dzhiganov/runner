@@ -398,6 +398,22 @@ is being used is printed in the terminal header on every run.
 | `⌘R` | Restart the selected project |
 | `⌘.` | Stop the selected project |
 | `⌘,` | Edit configuration |
+| `⌘K` | Command palette |
+
+### The command palette
+
+`⌘K` reaches everything without the mouse: start, stop, restart or configure any
+project, open one in the browser or in Finder, start or stop everything, open
+the logs, run a scan.
+
+Matching is by subsequence, so `gc` finds **G**o to g**c**-api and Start
+gc-frontend without typing the whole name. Matches at the start of a word rank
+above ones buried mid-word, so `res` puts Restart above Configure. The most
+recently used commands come first when nothing is typed.
+
+The palette offers only what applies right now: a running project offers Stop
+and Restart, a stopped one offers Start, and one whose ports are taken offers
+to show what is holding them instead of a Start that would fail.
 
 ---
 

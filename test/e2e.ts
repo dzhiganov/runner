@@ -15,6 +15,7 @@ import { parseWorktrees, parseStatus, gitStatus, repoInfo, forgetRepos } from '.
 import { parseListeners, sweep } from '../src/main/processes.js'
 import { score } from '../src/shared/fuzzy.js'
 import { decide } from '../src/shared/notify-rules.js'
+import { parsePs, descendants, summarise } from '../src/main/resources.js'
 import { buildTree, dependentsOf, findCycles, startOrder } from '../src/shared/graph.js'
 import type { ProjectConfig, ProjectRuntime } from '../src/shared/types.js'
 
@@ -460,6 +461,54 @@ async function main(): Promise<void> {
   const cachedSelf = await repoInfo(process.cwd())
   check('a repeated read is served from cache with the same answer', cachedSelf?.name === self?.name)
   check('a different directory is not served the first one\'s answer', (await repoInfo('/tmp')) === null)
+
+  // --- resource sampling -------------------------------------------------
+  // Regression: `pcpu` is printed with the locale's decimal separator. On a
+  // comma-locale machine every reading arrives as `0,0` and Number() gives
+  // NaN, so every project reports NaN% and it reads as broken sampling.
+  const commaLocale = parsePs('  100  1  12,4  684000\n  101  100  0,5  12000\n')
+  check(
+    'a comma decimal separator parses',
+    commaLocale[0].cpu === 12.4,
+    `${commaLocale[0].cpu}`
+  )
+  check('a dot decimal separator still parses', parsePs('100 1 12.4 684000')[0].cpu === 12.4)
+  check('ragged leading whitespace is tolerated', commaLocale.length === 2)
+  check('a short line is skipped', parsePs('100 1\n100 1 2 3').length === 1)
+  check('a header-like line is skipped', parsePs('PID PPID %CPU RSS').length === 0)
+
+  // The point of the module: Runner's child is a login shell, and the memory
+  // that hurts belongs to the node processes beneath it.
+  const TREE = parsePs([
+    '500 1 0.1 5000',      // the shell Runner spawned
+    '501 500 12.0 400000', // npm
+    '502 501 30.0 800000', // the actual dev server
+    '503 502 1.0 20000',   // something it spawned
+    '900 1 50.0 999000'    // an unrelated process
+  ].join('\n'))
+
+  const procTree = descendants(TREE, 500)
+  check('the whole descendant tree is collected', procTree.length === 4, `${procTree.length}`)
+  check('an unrelated process is not collected', !procTree.some((r) => r.pid === 900))
+  check('a leaf several levels down is collected', procTree.some((r) => r.pid === 503))
+  check('a pid with no match returns nothing', descendants(TREE, 12345).length === 0)
+
+  const summary = summarise(TREE, new Map([['p', 500]]))
+  check(
+    'cpu is summed across the tree, not read off the shell',
+    summary[0].cpu === 43.1,
+    `${summary[0].cpu}`
+  )
+  check(
+    'memory is summed and converted from kilobytes',
+    summary[0].memoryBytes === 1225000 * 1024,
+    `${summary[0].memoryBytes}`
+  )
+  check('the process count includes the shell', summary[0].processes === 4)
+  check(
+    'a project whose pid is gone is omitted rather than reported as zero',
+    summarise(TREE, new Map([['p', 4242]])).length === 0
+  )
 
   // --- notifications -----------------------------------------------------
   const runtimeOf = (over: Partial<ProjectRuntime> = {}): ProjectRuntime => ({

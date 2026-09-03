@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { LogLevel, LogLine, ProjectConfig } from '@shared/types.js'
+import type { LogLevel, LogLine, ProjectConfig, ProjectResources } from '@shared/types.js'
 
 interface Props {
   projects: ProjectConfig[]
+  /** One entry per running project, for the aggregate in the footer. */
+  resources: ProjectResources[]
 }
 
 /** How many lines the view holds before dropping the oldest from the top. */
@@ -24,7 +26,14 @@ function clockOf(at: number): string {
     .join(':')
 }
 
-export default function LogView({ projects }: Props): React.JSX.Element {
+/** Memory in the largest unit that keeps it readable. */
+function formatBytes(bytes: number): string {
+  const mb = bytes / (1024 * 1024)
+  if (mb < 1024) return `${Math.round(mb)} MB`
+  return `${(mb / 1024).toFixed(1)} GB`
+}
+
+export default function LogView({ projects, resources }: Props): React.JSX.Element {
   const [lines, setLines] = useState<LogLine[]>([])
   const [search, setSearch] = useState('')
   const [levelIndex, setLevelIndex] = useState(0)
@@ -211,6 +220,13 @@ export default function LogView({ projects }: Props): React.JSX.Element {
         </span>
         {selected.size > 0 && <span>{selected.size} of {projects.length} projects</span>}
         {paused && <span>paused — new output is still being collected</span>}
+        <span className="spacer" />
+        {resources.length > 0 && (
+          <span title={`${resources.reduce((n, r) => n + r.processes, 0)} processes`}>
+            {resources.length} running · {resources.reduce((n, r) => n + r.cpu, 0).toFixed(0)}% cpu ·{' '}
+            {formatBytes(resources.reduce((n, r) => n + r.memoryBytes, 0))}
+          </span>
+        )}
       </footer>
     </div>
   )

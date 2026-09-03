@@ -6,6 +6,7 @@ import type {
   ExternalProcess,
   PortConflict,
   ProjectGit,
+  ProjectResources,
   ProjectConfig,
   ProjectRuntime,
   RunnerConfig,
@@ -41,6 +42,9 @@ const api = {
   stopOnly: (id: string): Promise<void> => ipcRenderer.invoke('project:stopOnly', id),
   /** Stops the project, waits for its ports to come back, and starts it again. */
   restart: (id: string): Promise<void> => ipcRenderer.invoke('project:restart', id),
+
+  /** CPU and memory per running project, summed over its whole process tree. */
+  getResources: (): Promise<ProjectResources[]> => ipcRenderer.invoke('resources:all'),
 
   /** Dev servers running outside Runner, attributed to the projects they are in. */
   getExternals: (): Promise<ExternalProcess[]> => ipcRenderer.invoke('processes:external'),
@@ -89,6 +93,11 @@ const api = {
     const listener = (_e: unknown, line: LogLine): void => handler(line)
     ipcRenderer.on('logs:line', listener)
     return () => ipcRenderer.off('logs:line', listener)
+  },
+  onResources: (handler: (found: ProjectResources[]) => void): (() => void) => {
+    const listener = (_e: unknown, found: ProjectResources[]): void => handler(found)
+    ipcRenderer.on('resources:update', listener)
+    return () => ipcRenderer.off('resources:update', listener)
   },
   onExternals: (handler: (found: ExternalProcess[]) => void): (() => void) => {
     const listener = (_e: unknown, found: ExternalProcess[]): void => handler(found)

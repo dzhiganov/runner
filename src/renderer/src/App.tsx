@@ -3,6 +3,7 @@ import type {
   ExternalProcess,
   ProjectConfig,
   ProjectGit,
+  ProjectResources,
   ProjectRuntime,
   RunnerConfig
 } from '@shared/types.js'
@@ -69,6 +70,13 @@ function portLabel(ports: number[]): string {
   return ports.length === 1 ? `:${ports[0]}` : `:${ports[0]} +${ports.length - 1}`
 }
 
+/** Memory in the largest unit that keeps it readable: 684 MB, 4.2 GB. */
+function formatBytes(bytes: number): string {
+  const mb = bytes / (1024 * 1024)
+  if (mb < 1024) return `${Math.round(mb)} MB`
+  return `${(mb / 1024).toFixed(1)} GB`
+}
+
 function urlFor(project: ProjectConfig, port: number): string {
   return `${project.protocol ?? 'http'}://localhost:${port}`
 }
@@ -97,6 +105,7 @@ export default function App(): React.JSX.Element {
   /** Dev servers running outside Runner, keyed by the project they belong to. */
   const [externals, setExternals] = useState<Record<string, ExternalProcess>>({})
   const [paletteOpen, setPaletteOpen] = useState(false)
+  const [resources, setResources] = useState<Record<string, ProjectResources>>({})
   const [now, setNow] = useState(() => Date.now())
   const [dragId, setDragId] = useState<string | null>(null)
   const [dropId, setDropId] = useState<string | null>(null)
@@ -130,6 +139,10 @@ export default function App(): React.JSX.Element {
     const index = (found: ExternalProcess[]): Record<string, ExternalProcess> =>
       Object.fromEntries(found.map((p) => [p.projectId, p]))
     const offExternals = window.runner.onExternals((found) => setExternals(index(found)))
+    const byProject = (found: ProjectResources[]): Record<string, ProjectResources> =>
+      Object.fromEntries(found.map((r) => [r.projectId, r]))
+    const offResources = window.runner.onResources((found) => setResources(byProject(found)))
+    window.runner.getResources().then((found) => setResources(byProject(found)))
     const offFocus = window.runner.onFocusProject((id) => {
       setActiveId(id)
       setShowLogs(false)
@@ -140,6 +153,7 @@ export default function App(): React.JSX.Element {
       offConfig()
       offExternals()
       offFocus()
+      offResources()
     }
   }, [])
 
@@ -549,7 +563,7 @@ export default function App(): React.JSX.Element {
 
       <main className="main">
         {showLogs ? (
-          <LogView projects={config.projects} />
+          <LogView projects={config.projects} resources={Object.values(resources)} />
         ) : active && activeRuntime ? (
           <>
             <header className="toolbar">
@@ -697,6 +711,12 @@ export default function App(): React.JSX.Element {
                 <span>port {externals[active.id].ports.join(', ')}</span>
               )}
               {activeRuntime.pid && <span>pid {activeRuntime.pid}</span>}
+              {resources[active.id] && (
+                <span title={`${resources[active.id].processes} processes in the tree`}>
+                  {resources[active.id].cpu.toFixed(1)}% cpu ·{' '}
+                  {formatBytes(resources[active.id].memoryBytes)}
+                </span>
+              )}
               {activeRuntime.restartAttempts > 0 && (
                 <span>auto-restart attempt {activeRuntime.restartAttempts}</span>
               )}

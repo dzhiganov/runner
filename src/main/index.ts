@@ -9,6 +9,7 @@ import type {
   ExternalProcess,
   PortConflict,
   ProjectGit,
+  ProjectResources,
   ProjectConfig,
   RepoInfo,
   RunnerConfig,
@@ -23,6 +24,7 @@ import { classify, killOwner } from './port-conflict.js'
 import { forgetRepos, gitStatus, repoInfo } from './git.js'
 import { sweep } from './processes.js'
 import { Notifier } from './notify.js'
+import { sample } from './resources.js'
 import { isPortFree, waitForPortsFree } from './ports.js'
 
 let mainWindow: BrowserWindow | null = null
@@ -56,6 +58,25 @@ let portPoll: NodeJS.Timeout | null = null
 const SWEEP_MS = 6_000
 let sweepPoll: NodeJS.Timeout | null = null
 let externals: ExternalProcess[] = []
+
+/** How often running projects are sampled for CPU and memory. */
+const RESOURCE_MS = 3_000
+let resourcePoll: NodeJS.Timeout | null = null
+let resources: ProjectResources[] = []
+
+async function refreshResources(): Promise<void> {
+  const pids = new Map<string, number>()
+  for (const project of config.projects) {
+    const pid = manager.runtime(project.id).pid
+    if (pid !== null) pids.set(project.id, pid)
+  }
+
+  // Nothing running means nothing to sample, and no reason to shell out.
+  const next = pids.size ? await sample(pids) : []
+  if (JSON.stringify(next) === JSON.stringify(resources)) return
+  resources = next
+  send('resources:update', resources)
+}
 
 async function refreshExternals(): Promise<void> {
   const found = await sweep(
@@ -334,6 +355,7 @@ function registerIpc(): void {
   })
 
   ipcMain.handle('processes:external', () => externals)
+  ipcMain.handle('resources:all', () => resources)
 
   // --- port conflicts ----------------------------------------------------
 
@@ -450,6 +472,7 @@ app.whenReady().then(() => {
 
   void refreshRepos().then(refreshExternals)
   sweepPoll = setInterval(() => void refreshExternals(), SWEEP_MS)
+  resourcePoll = setInterval(() => void refreshResources(), RESOURCE_MS)
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
@@ -478,6 +501,7 @@ app.on('before-quit', (event) => {
   quitConfirmed = true
   if (portPoll) clearInterval(portPoll)
   if (sweepPoll) clearInterval(sweepPoll)
+  if (resourcePoll) clearInterval(resourcePoll)
   manager.stopAll().finally(() => app.quit())
 })
 

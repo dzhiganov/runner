@@ -301,6 +301,16 @@ export interface LogQuery {
   limit?: number
 }
 
+/** One sample of what a project's process tree is costing. */
+export interface ProjectResources {
+  projectId: string
+  /** Percent of one core, summed across the tree. Can exceed 100. */
+  cpu: number
+  memoryBytes: number
+  /** How many processes the tree contains, including the shell Runner spawned. */
+  processes: number
+}
+
 export interface ConfigValidationIssue {
   path: string
   message: string

@@ -330,6 +330,27 @@ written to disk, so it starts empty each launch.
 
 ---
 
+## What it is costing
+
+The status bar carries CPU and memory for the selected project, and the All
+logs footer totals everything Runner is running:
+
+```text
+Running   port 4970   pid 70332   22.7% cpu · 304 MB
+
+3 running · 61% cpu · 1.9 GB
+```
+
+The reading covers the project's **whole process tree**, not the shell Runner
+spawned. Your dev server is a grandchild — `npm run dev` starts `vite`, which
+starts something else — so measuring only the direct child would report a few
+megabytes and be worthless. Hovering says how many processes were summed.
+
+CPU is percent of one core summed across the tree, so it exceeds 100% on a
+project using more than one.
+
+---
+
 ## Notifications
 
 Bringing a stack up takes half a minute. Watching a terminal for it is a waste

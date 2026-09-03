@@ -1038,3 +1038,152 @@ input.narrow {
   color: var(--muted);
   font-size: 12px;
 }
+
+/* --- merged log view ------------------------------------------------------ */
+
+.logs-entry {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: 0;
+  padding: 7px 9px;
+  margin-bottom: 4px;
+  border-radius: var(--radius);
+  color: var(--muted);
+  cursor: default;
+}
+
+.logs-entry:hover {
+  background: #22262e;
+  color: var(--text);
+}
+
+.logs-entry.on {
+  background: #2a2f3a;
+  color: var(--text);
+}
+
+.logs {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.logs-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--line);
+}
+
+.logs-search {
+  flex: 0 1 320px;
+  background: var(--bg-term);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 5px 9px;
+  outline: none;
+}
+
+.logs-search:focus {
+  border-color: var(--accent);
+}
+
+.logs-bar .spacer {
+  flex: 1;
+}
+
+.logs-projects {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--line);
+}
+
+.chip-toggle {
+  background: #22262e;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 3px 10px;
+  font-size: 12px;
+  color: var(--muted);
+  cursor: default;
+}
+
+.chip-toggle:hover {
+  color: var(--text);
+}
+
+.chip-toggle.on {
+  background: rgb(109 140 255 / 0.16);
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+.logs-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  background: var(--bg-term);
+  padding: 6px 0;
+  font-family: SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.logs-empty {
+  color: var(--muted);
+  text-align: center;
+  padding: 40px 20px;
+  font-family: inherit;
+}
+
+.logs-line {
+  display: grid;
+  grid-template-columns: 62px 110px minmax(0, 1fr);
+  gap: 10px;
+  padding: 0 12px;
+}
+
+.logs-line:hover {
+  background: rgb(255 255 255 / 0.03);
+}
+
+.logs-time {
+  color: #5b6372;
+}
+
+.logs-src {
+  color: var(--muted);
+}
+
+.logs-text {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* The level is carried by the source tag and a rule, not by recolouring the
+   whole line: a wall of red is harder to read than the message itself. */
+.logs-line.warn .logs-src {
+  color: var(--amber);
+}
+
+.logs-line.error .logs-src {
+  color: var(--red);
+}
+
+.logs-line.error {
+  background: rgb(247 118 142 / 0.07);
+  box-shadow: inset 2px 0 0 var(--red);
+}
+
+.logs-line.warn {
+  box-shadow: inset 2px 0 0 var(--amber);
+}

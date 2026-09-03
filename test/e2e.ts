@@ -7,6 +7,7 @@ import { Orchestrator } from '../src/main/orchestrator.js'
 import { resolvePort, isPortFree, waitForPort, waitForPortsFree } from '../src/main/ports.js'
 import { migrate, validateConfig } from '../src/main/config-validate.js'
 import { fallbackCommand, inspect, scan, tildify } from '../src/main/discovery.js'
+import { LogStore, levelOf } from '../src/main/log-store.js'
 import { buildTree, dependentsOf, findCycles, startOrder } from '../src/shared/graph.js'
 import type { ProjectConfig, ProjectRuntime } from '../src/shared/types.js'
 
@@ -233,6 +234,162 @@ async function main(): Promise<void> {
   check('scanRoots must be an array', !badRoots.ok)
 
   rmSync(ROOT, { recursive: true, force: true })
+
+  // --- merged logs -------------------------------------------------------
+  const store = new LogStore()
+
+  // A chunk boundary lands wherever the OS felt like it. A line split across
+  // two reads must be stored as one, or it is searched and filtered as two.
+  store.ingest('a', 'first line\nsecond ')
+  store.ingest('a', 'half of a line\n')
+  const split = store.query()
+  check(
+    'a line split across two chunks is stored once',
+    split.length === 2 && split[1].text === 'second half of a line',
+    split.map((l) => l.text).join(' | ')
+  )
+
+  check('lines are ordered oldest first', split[0].text === 'first line')
+  check('sequence numbers increase', split[0].seq < split[1].seq)
+
+  // An unterminated tail is held back until the newline arrives, so a partial
+  // line is never shown as if it were complete.
+  store.ingest('a', 'no newline yet')
+  check('an unterminated line is withheld', store.query().length === 2)
+  store.flush('a')
+  check('flush files what a process left unterminated', store.query().length === 3)
+  store.flush('a')
+  check('flushing twice does not duplicate the line', store.query().length === 3)
+
+  store.clear()
+
+  // Regression: a PTY ends its lines with CRLF, not LF. Treating the line's own
+  // terminating CR as a progress-bar rewrite takes everything after it — the
+  // empty string — and silently drops every line the app ever prints.
+  store.ingest('a', 'api booting\r\nready on http://localhost:3000\r\n')
+  const crlf = store.query()
+  check(
+    'CRLF line endings are handled, not swallowed',
+    crlf.length === 2 && crlf[0].text === 'api booting',
+    `${crlf.length} lines: ${crlf.map((l) => JSON.stringify(l.text)).join(' | ')}`
+  )
+
+  store.clear()
+
+  // A progress bar rewrites one line with carriage returns; the terminal shows
+  // only the last frame, so keeping every frame would fill the log with one
+  // download.
+  store.ingest('a', 'downloading 1%\rdownloading 50%\rdownloading 100%\n')
+  const progress = store.query()
+  check(
+    'carriage returns collapse to the final frame',
+    progress.length === 1 && progress[0].text === 'downloading 100%',
+    progress.map((l) => l.text).join(' | ')
+  )
+
+  store.clear()
+  store.ingest('a', '\x1b[32mready on http://localhost:3000\x1b[0m\n')
+  check(
+    'ANSI escapes are stripped from the stored text',
+    store.query()[0].text === 'ready on http://localhost:3000',
+    JSON.stringify(store.query()[0].text)
+  )
+
+  // Colour is read before the escapes are stripped, and trusted over the text:
+  // a server that paints a line red has said so more directly than any pattern.
+  check('a red line is an error', levelOf('\x1b[31msomething broke\x1b[0m') === 'error')
+  check('a bright red line is an error', levelOf('\x1b[1;91mbroke\x1b[0m') === 'error')
+  check('a yellow line is a warning', levelOf('\x1b[33mheads up\x1b[0m') === 'warn')
+  check('an uncoloured line is info', levelOf('GET /products 200') === 'info')
+
+  check('ERROR in the text marks an error', levelOf('ERROR database connection') === 'error')
+  check('npm ERR! marks an error', levelOf('npm ERR! code ELIFECYCLE') === 'error')
+  check('WARN in the text marks a warning', levelOf('WARN peer dependency') === 'warn')
+
+  // Regression: `error` appears inside ordinary identifiers and in perfectly
+  // happy build output. Matching it loosely would make the filter useless.
+  check('a filename containing "error" is not an error', levelOf('compiled src/errorHandler.ts') === 'info')
+  check('"no errors" is not an error', levelOf('webpack compiled with no errors') === 'info')
+
+  store.clear()
+  store.ingest('api', 'GET /products\nERROR db is down\nWARN slow query\n')
+  store.ingest('web', 'compiled ok\nERROR build failed\n')
+
+  check('query returns every project by default', store.query().length === 5)
+  check(
+    'query filters by project',
+    store.query({ projectIds: ['api'] }).length === 3
+  )
+  check(
+    'query filters by level',
+    store.query({ levels: ['error'] }).length === 2
+  )
+  check(
+    'query filters by project and level together',
+    store.query({ projectIds: ['web'], levels: ['error'] }).length === 1
+  )
+  check(
+    'search is a case-insensitive substring match',
+    store.query({ search: 'DB IS' }).length === 1 &&
+      store.query({ search: 'db is' })[0].text === 'ERROR db is down'
+  )
+  check(
+    'search combines with the other filters',
+    store.query({ search: 'error', projectIds: ['web'] }).length === 1
+  )
+  check('an unmatched search returns nothing', store.query({ search: 'zzzz' }).length === 0)
+
+  // The limit must keep the NEWEST lines: a log view showing the oldest 50 of
+  // 5000 is showing the wrong end of the file.
+  const limited = store.query({ limit: 2 })
+  check(
+    'a limit keeps the newest lines, still oldest-first',
+    limited.length === 2 &&
+      limited[1].text === 'ERROR build failed' &&
+      limited[0].seq < limited[1].seq,
+    limited.map((l) => l.text).join(' | ')
+  )
+
+  check('clearing one project leaves the others', (() => {
+    const s2 = new LogStore()
+    s2.ingest('api', 'one\n')
+    s2.ingest('web', 'two\n')
+    s2.clear('api')
+    const rest = s2.query()
+    return rest.length === 1 && rest[0].projectId === 'web'
+  })())
+
+  check('pruning drops projects that no longer exist', (() => {
+    const s2 = new LogStore()
+    s2.ingest('api', 'one\n')
+    s2.ingest('gone', 'two\n')
+    s2.prune(new Set(['api']))
+    return s2.query().length === 1 && s2.query()[0].projectId === 'api'
+  })())
+
+  check('blank lines are not stored', (() => {
+    const s2 = new LogStore()
+    s2.ingest('a', 'real\n\n   \n\x1b[0m\n')
+    return s2.query().length === 1
+  })())
+
+  check('a live line is emitted as it arrives', (() => {
+    const s2 = new LogStore()
+    const seen: string[] = []
+    s2.on('line', (line) => seen.push(line.text))
+    s2.ingest('a', 'streamed\n')
+    return seen.length === 1 && seen[0] === 'streamed'
+  })())
+
+  // Retention: a dev server left up all day must not grow this without limit.
+  const big = new LogStore()
+  for (let i = 0; i < 25_000; i += 1) big.ingest('a', `line ${i}\n`)
+  const kept = big.query({ limit: 100_000 })
+  check(
+    'the store is bounded and keeps the newest lines',
+    big.size() <= 20_000 && kept[kept.length - 1].text === 'line 24999',
+    `held ${big.size()}`
+  )
 
   // --- shell selection ---------------------------------------------------
   // Regression: an inherited SHELL (from `open`, a launcher, a parent script)

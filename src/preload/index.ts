@@ -1,6 +1,8 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import type {
   DiscoveredProject,
+  LogLine,
+  LogQuery,
   ProjectConfig,
   ProjectRuntime,
   RunnerConfig,
@@ -37,6 +39,11 @@ const api = {
   /** Stops the project, waits for its ports to come back, and starts it again. */
   restart: (id: string): Promise<void> => ipcRenderer.invoke('project:restart', id),
 
+  /** Merged, filtered lines from every project. Oldest first. */
+  queryLogs: (query: LogQuery): Promise<LogLine[]> => ipcRenderer.invoke('logs:query', query),
+  /** Clears the merged view, for one project or all of them. */
+  clearLogs: (projectId?: string): Promise<void> => ipcRenderer.invoke('logs:clear', projectId),
+
   getRuntimes: (): Promise<ProjectRuntime[]> => ipcRenderer.invoke('runtime:all'),
   getBuffer: (id: string): Promise<string> => ipcRenderer.invoke('pty:buffer', id),
   clearBuffer: (id: string): Promise<void> => ipcRenderer.invoke('pty:clear', id),
@@ -49,11 +56,19 @@ const api = {
   openPath: (path: string): Promise<string> => ipcRenderer.invoke('shell:openPath', path),
   pickDirectory: (current?: string): Promise<string | null> =>
     ipcRenderer.invoke('dialog:pickDirectory', current),
+  /** Saves text to a file the user picks. Resolves to the path, or null if cancelled. */
+  saveText: (suggested: string, body: string): Promise<string | null> =>
+    ipcRenderer.invoke('dialog:saveText', suggested, body),
 
   onData: (handler: (id: string, chunk: string) => void): (() => void) => {
     const listener = (_e: unknown, id: string, chunk: string): void => handler(id, chunk)
     ipcRenderer.on('pty:data', listener)
     return () => ipcRenderer.off('pty:data', listener)
+  },
+  onLogLine: (handler: (line: LogLine) => void): (() => void) => {
+    const listener = (_e: unknown, line: LogLine): void => handler(line)
+    ipcRenderer.on('logs:line', listener)
+    return () => ipcRenderer.off('logs:line', listener)
   },
   onRuntime: (handler: (runtime: ProjectRuntime) => void): (() => void) => {
     const listener = (_e: unknown, runtime: ProjectRuntime): void => handler(runtime)

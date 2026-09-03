@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import type {
   AutoRestartConfig,
+  NotificationConfig,
   ConfigValidationIssue,
   ProjectConfig,
   ReadinessConfig,
@@ -181,6 +182,30 @@ function readScanRoots(
   return roots
 }
 
+/** Parses `notifications`. A bare boolean is accepted as on/off shorthand. */
+function readNotifications(
+  raw: unknown,
+  issues: ConfigValidationIssue[]
+): NotificationConfig | undefined {
+  if (raw === undefined || raw === null) return undefined
+  if (typeof raw === 'boolean') return { enabled: raw }
+  if (typeof raw !== 'object' || Array.isArray(raw)) {
+    issues.push({ path: 'notifications', message: '`notifications` must be an object or true/false.' })
+    return undefined
+  }
+  const r = raw as Record<string, unknown>
+  for (const key of ['enabled', 'failuresOnly'] as const) {
+    if (r[key] !== undefined && r[key] !== null && typeof r[key] !== 'boolean') {
+      issues.push({ path: `notifications.${key}`, message: `\`${key}\` must be true or false.` })
+      return undefined
+    }
+  }
+  return {
+    enabled: r.enabled !== false,
+    ...(r.failuresOnly === true ? { failuresOnly: true } : {})
+  }
+}
+
 export function validateConfig(
   raw: unknown
 ): { ok: true; config: RunnerConfig } | { ok: false; issues: ConfigValidationIssue[] } {
@@ -195,6 +220,7 @@ export function validateConfig(
   }
 
   const scanRoots = readScanRoots((raw as Record<string, unknown>).scanRoots, issues)
+  const notifications = readNotifications((raw as Record<string, unknown>).notifications, issues)
 
   const seenNames = new Set<string>()
   const seenIds = new Set<string>()
@@ -348,5 +374,12 @@ export function validateConfig(
   }
 
   if (issues.length) return { ok: false, issues }
-  return { ok: true, config: { projects, ...(scanRoots?.length ? { scanRoots } : {}) } }
+  return {
+    ok: true,
+    config: {
+      projects,
+      ...(scanRoots?.length ? { scanRoots } : {}),
+      ...(notifications ? { notifications } : {})
+    }
+  }
 }

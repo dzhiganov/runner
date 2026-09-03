@@ -64,6 +64,13 @@ export interface ProjectConfig {
   cwd?: string
 }
 
+/** Desktop notifications for projects becoming ready, failing, or crashing. */
+export interface NotificationConfig {
+  enabled: boolean
+  /** Only interrupt for failures — no "is ready". Defaults to off. */
+  failuresOnly?: boolean
+}
+
 export interface RunnerConfig {
   projects: ProjectConfig[]
   /**
@@ -71,6 +78,8 @@ export interface RunnerConfig {
    * means discovery has not been set up; the UI offers likely roots instead.
    */
   scanRoots?: string[]
+  /** Desktop notifications. Absent means on, with readiness included. */
+  notifications?: NotificationConfig
 }
 
 /** Package manager inferred from a project's lockfile. */

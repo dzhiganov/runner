@@ -330,6 +330,31 @@ written to disk, so it starts empty each launch.
 
 ---
 
+## Notifications
+
+Bringing a stack up takes half a minute. Watching a terminal for it is a waste
+of the wait, so Runner says when something happens:
+
+```text
+🟢 api is ready              Listening on port 4200
+🔴 frontend failed to start  Directory not found: ~/projects/gone
+⚠️ api crashed               Exited with code 7 · restart attempt 2
+⚠️ admin has no free port    Every port it is allowed to use is taken.
+```
+
+Clicking one selects that project.
+
+Only *transitions* are announced, and only ones Runner did not cause. A stop
+you asked for is not news. Neither is a project that is still running, or one
+that is still crashed — runtime updates fire for port polls and elapsed-time
+ticks too, and announcing states rather than changes would mean a crashed
+project alerting forever.
+
+Turn them off with `"notifications": false`, or keep just the failures with
+`{ "enabled": true, "failuresOnly": true }`.
+
+---
+
 ## Settings
 
 Every project is configured from a form, with a **Raw JSON** tab for when that
@@ -355,9 +380,14 @@ first launch.
       "env": { "NODE_ENV": "development" }
     }
   ],
-  "scanRoots": ["~/Projects", "~/Work"]
+  "scanRoots": ["~/Projects", "~/Work"],
+  "notifications": { "enabled": true }
 }
 ```
+
+`notifications` controls desktop alerts — `false` turns them off, and
+`{ "enabled": true, "failuresOnly": true }` keeps the failures without the "is
+ready" ones. Absent means on.
 
 `scanRoots` is the list of folders the project scan walks. It is written for
 you when you add a folder in the discovery dialog, and is the only top-level

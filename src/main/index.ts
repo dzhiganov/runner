@@ -22,6 +22,7 @@ import { LogStore } from './log-store.js'
 import { classify, killOwner } from './port-conflict.js'
 import { forgetRepos, gitStatus, repoInfo } from './git.js'
 import { sweep } from './processes.js'
+import { Notifier } from './notify.js'
 import { isPortFree, waitForPortsFree } from './ports.js'
 
 let mainWindow: BrowserWindow | null = null
@@ -29,6 +30,17 @@ let config: RunnerConfig = { projects: [] }
 const manager = new ProcessManager()
 const orchestrator = new Orchestrator(manager, () => config.projects)
 const logs = new LogStore()
+const notifier = new Notifier(
+  (id) => findProject(id)?.name ?? null,
+  (id) => {
+    // Clicking a notification should land you on the project it is about.
+    if (!mainWindow || mainWindow.isDestroyed()) return
+    if (mainWindow.isMinimized()) mainWindow.restore()
+    mainWindow.focus()
+    send('project:focus', id)
+  },
+  () => config.notifications ?? { enabled: true }
+)
 
 /** How often stopped projects are re-checked for port availability. */
 const PORT_POLL_MS = 4_000
@@ -124,6 +136,7 @@ manager.on('data', (projectId, chunk) => {
 manager.on('runtime', (runtime) => {
   // A project that exits without a trailing newline still has a last line.
   if (runtime.status === 'exited' || runtime.status === 'error') logs.flush(runtime.id)
+  notifier.observe(runtime)
   send('runtime:update', runtime)
 })
 logs.on('line', (line) => send('logs:line', line))
@@ -138,6 +151,7 @@ function adopt(next: RunnerConfig): void {
   const live = new Set(config.projects.map((p) => p.id))
   manager.prune(live)
   logs.prune(live)
+  notifier.forget(live)
   forgetRepos()
   repoCache.clear()
   void refreshRepos().then(refreshExternals)

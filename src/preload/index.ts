@@ -100,6 +100,12 @@ const api = {
     ipcRenderer.on('runtime:update', listener)
     return () => ipcRenderer.off('runtime:update', listener)
   },
+  /** A notification was clicked; the project it named should be selected. */
+  onFocusProject: (handler: (id: string) => void): (() => void) => {
+    const listener = (_e: unknown, id: string): void => handler(id)
+    ipcRenderer.on('project:focus', listener)
+    return () => ipcRenderer.off('project:focus', listener)
+  },
   onConfigChanged: (handler: (config: RunnerConfig) => void): (() => void) => {
     const listener = (_e: unknown, config: RunnerConfig): void => handler(config)
     ipcRenderer.on('config:changed', listener)

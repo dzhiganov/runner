@@ -130,11 +130,16 @@ export default function App(): React.JSX.Element {
     const index = (found: ExternalProcess[]): Record<string, ExternalProcess> =>
       Object.fromEntries(found.map((p) => [p.projectId, p]))
     const offExternals = window.runner.onExternals((found) => setExternals(index(found)))
+    const offFocus = window.runner.onFocusProject((id) => {
+      setActiveId(id)
+      setShowLogs(false)
+    })
     window.runner.getExternals().then((found) => setExternals(index(found)))
     return () => {
       offRuntime()
       offConfig()
       offExternals()
+      offFocus()
     }
   }, [])
 

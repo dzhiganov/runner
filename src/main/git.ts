@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
-import type { RepoInfo, Worktree } from '../shared/types.js'
+import type { GitStatus, RepoInfo, Worktree } from '../shared/types.js'
 import { expandPath } from './paths.js'
 
 const run = promisify(execFile)
@@ -21,12 +21,23 @@ const GIT_TIMEOUT_MS = 3_000
  */
 const REPO_TTL_MS = 15_000
 
-interface Cached {
+/**
+ * How long working-copy state is reused.
+ *
+ * Far shorter than the repository TTL: a branch is switched and files are
+ * edited constantly, where worktrees are created by hand days apart. Sharing
+ * one cache between the two would either re-shell for worktrees far too often
+ * or show a dirty count minutes out of date.
+ */
+const STATUS_TTL_MS = 2_500
+
+interface Cached<T> {
   at: number
-  value: RepoInfo | null
+  value: T
 }
 
-const cache = new Map<string, Cached>()
+const cache = new Map<string, Cached<RepoInfo | null>>()
+const statusCache = new Map<string, Cached<GitStatus | null>>()
 
 async function git(cwd: string, args: string[]): Promise<string | null> {
   try {
@@ -120,7 +131,64 @@ export async function repoInfo(dir: string): Promise<RepoInfo | null> {
   return value
 }
 
-/** Drops cached repository information, so the next read is fresh. */
+/**
+ * Parses `git status --porcelain=v2 --branch`.
+ *
+ * Header lines are `# branch.<field> <value>`. Entries that follow are one per
+ * path: `1` ordinary changes, `2` renames and copies, `u` unmerged, `?`
+ * untracked. Everything but `?` counts as a change to a tracked file.
+ */
+export function parseStatus(output: string): GitStatus {
+  let branch: string | null = null
+  let detached = false
+  let ahead: number | null = null
+  let behind: number | null = null
+  let changed = 0
+  let untracked = 0
+
+  for (const line of output.split('\n')) {
+    if (!line) continue
+
+    if (line.startsWith('# branch.head ')) {
+      const value = line.slice(14).trim()
+      // git spells a detached head `(detached)`, which is not a branch name.
+      if (value === '(detached)') detached = true
+      else branch = value
+    } else if (line.startsWith('# branch.ab ')) {
+      // `+2 -1`. Absent entirely when the branch has no upstream, which is why
+      // both counts start as null rather than zero.
+      const match = line.slice(12).trim().match(/^\+(\d+)\s+-(\d+)$/)
+      if (match) {
+        ahead = Number(match[1])
+        behind = Number(match[2])
+      }
+    } else if (line.startsWith('#')) {
+      continue
+    } else if (line.startsWith('? ')) {
+      untracked += 1
+    } else if (line.startsWith('1 ') || line.startsWith('2 ') || line.startsWith('u ')) {
+      changed += 1
+    }
+  }
+
+  return { branch, detached, ahead, behind, changed, untracked, clean: changed === 0 && untracked === 0 }
+}
+
+/** Working-copy state of the checkout at `dir`, or null when it is not one. */
+export async function gitStatus(dir: string): Promise<GitStatus | null> {
+  const cwd = expandPath(dir)
+
+  const cached = statusCache.get(cwd)
+  if (cached && Date.now() - cached.at < STATUS_TTL_MS) return cached.value
+
+  const output = await git(cwd, ['status', '--porcelain=v2', '--branch'])
+  const value = output === null ? null : parseStatus(output)
+  statusCache.set(cwd, { at: Date.now(), value })
+  return value
+}
+
+/** Drops cached repository and working-copy information. */
 export function forgetRepos(): void {
   cache.clear()
+  statusCache.clear()
 }

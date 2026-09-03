@@ -156,6 +156,29 @@ export interface Worktree {
   locked: boolean
 }
 
+/**
+ * Working-copy state of one checkout.
+ *
+ * Deliberately five facts and no more: Runner answers "what state is this
+ * project in", and nothing about changing that state.
+ */
+export interface GitStatus {
+  /** Short branch name, or null when the head is detached. */
+  branch: string | null
+  detached: boolean
+  /**
+   * Commits ahead of and behind the upstream. Both null when the branch has no
+   * upstream — which is not the same as being level with one, and must not
+   * render as zero.
+   */
+  ahead: number | null
+  behind: number | null
+  /** Tracked files with changes, staged or not. */
+  changed: number
+  untracked: number
+  clean: boolean
+}
+
 /** A repository, and every working copy of it on this machine. */
 export interface RepoInfo {
   /** Path of the main working copy. */
@@ -201,6 +224,8 @@ export interface ProjectGit {
   repo: RepoInfo | null
   /** The worktree this project's directory is, when it is one. */
   worktree: Worktree | null
+  /** Working-copy state, read on its own faster cycle than the repository. */
+  status: GitStatus | null
 }
 
 /** A process found holding a port, as far as the OS would say. */

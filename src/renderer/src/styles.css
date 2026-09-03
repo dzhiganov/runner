@@ -1340,3 +1340,15 @@ input.narrow {
   font-size: 11px;
   white-space: nowrap;
 }
+
+/*
+ * The working-copy summary sits next to the branch and is empty when there is
+ * nothing to say, so a clean project carries no decoration and the ones that
+ * need attention are the ones that stand out.
+ */
+.dirt {
+  margin-right: 6px;
+  color: var(--amber);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}

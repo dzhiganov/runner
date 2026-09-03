@@ -161,15 +161,25 @@ knows. Ports below 1024 are ignored for the same reason.
 
 ## Worktrees
 
-Each project shows the branch it is checked out on:
+Each project shows the branch it is checked out on, and what state that
+checkout is in:
 
 ```text
 consumer-app
-🌿 main            Stopped
+🌿 main                       Stopped
 
 consumer-gc
-🌿 feat/GC-123     Stopped
+🌿 feat/GC-123  ✎3 ↑2         Stopped
 ```
+
+`✎3` is files changed, counting untracked ones. `↑2` and `↓1` are commits ahead
+of and behind the upstream. A clean checkout that is level with its upstream
+shows none of this — the decoration is there so the projects that need
+attention are the ones that stand out.
+
+A branch with no upstream shows no arrows at all, rather than `↑0 ↓0`. Having
+nowhere to push is a different thing from being up to date, and reading it as
+the second would be worse than saying nothing.
 
 Two checkouts of one repository are recognised as the same repository, not as
 unrelated projects. Identity is the shared git directory rather than the path —

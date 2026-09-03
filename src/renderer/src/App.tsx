@@ -285,6 +285,41 @@ export default function App(): React.JSX.Element {
     return worktree.head ? `detached at ${worktree.head.slice(0, 7)}` : null
   }
 
+  /**
+   * The compact working-copy summary: `✎7 ↑3 ↓1`.
+   *
+   * Empty when the checkout is clean and level, so a tidy project carries no
+   * decoration at all and the ones that need attention stand out.
+   */
+  const dirtOf = (id: string): string => {
+    const status = gitInfo[id]?.status
+    if (!status) return ''
+    const changed = status.changed + status.untracked
+    return [
+      changed > 0 ? `✎${changed}` : '',
+      // Null means no upstream, which is not the same as being level with one.
+      status.ahead ? `↑${status.ahead}` : '',
+      status.behind ? `↓${status.behind}` : ''
+    ]
+      .filter(Boolean)
+      .join(' ')
+  }
+
+  /** Spells out what the compact summary is counting. */
+  const dirtTitle = (id: string): string => {
+    const status = gitInfo[id]?.status
+    if (!status) return ''
+    const parts = [
+      status.changed ? `${status.changed} changed` : '',
+      status.untracked ? `${status.untracked} untracked` : '',
+      status.ahead ? `${status.ahead} ahead` : '',
+      status.behind ? `${status.behind} behind` : ''
+    ].filter(Boolean)
+    if (!parts.length) return 'Clean'
+    if (status.ahead === null) parts.push('no upstream')
+    return parts.join(', ')
+  }
+
   /** Names the repository a project belongs to, for the branch tooltip. */
   const branchTitle = (id: string): string => {
     const info = gitInfo[id]
@@ -392,6 +427,11 @@ export default function App(): React.JSX.Element {
                 <span className="branch" title={branchTitle(project.id)}>
                   <BranchIcon size={10} />
                   {branchOf(project.id)}
+                </span>
+              )}
+              {dirtOf(project.id) && (
+                <span className="dirt" title={dirtTitle(project.id)}>
+                  {dirtOf(project.id)}
                 </span>
               )}
               {metaFor(runtime)}

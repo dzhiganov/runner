@@ -20,7 +20,7 @@ import { Orchestrator } from './orchestrator.js'
 import { defaultRoots, fallbackCommand, inspect, scan, tildify } from './discovery.js'
 import { LogStore } from './log-store.js'
 import { classify, killOwner } from './port-conflict.js'
-import { forgetRepos, repoInfo } from './git.js'
+import { forgetRepos, gitStatus, repoInfo } from './git.js'
 import { sweep } from './processes.js'
 import { isPortFree, waitForPortsFree } from './ports.js'
 
@@ -266,12 +266,14 @@ function registerIpc(): void {
   ipcMain.handle('git:projects', async (): Promise<ProjectGit[]> =>
     Promise.all(
       config.projects.map(async (project) => {
-        const repo = await repoInfo(project.cwd ?? project.path)
-        const here = expandPath(project.cwd ?? project.path)
+        const dir = project.cwd ?? project.path
+        const [repo, status] = await Promise.all([repoInfo(dir), gitStatus(dir)])
+        const here = expandPath(dir)
         return {
           projectId: project.id,
           repo,
-          worktree: repo?.worktrees.find((w) => w.path === here) ?? null
+          worktree: repo?.worktrees.find((w) => w.path === here) ?? null,
+          status
         }
       })
     )

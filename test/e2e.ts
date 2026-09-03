@@ -11,7 +11,7 @@ import { fallbackCommand, inspect, scan, tildify } from '../src/main/discovery.j
 import { LogStore, levelOf } from '../src/main/log-store.js'
 import { whoHolds, groupIsSafeToKill } from '../src/main/port-owner.js'
 import { classify, killOwner, projectAt } from '../src/main/port-conflict.js'
-import { parseWorktrees, repoInfo, forgetRepos } from '../src/main/git.js'
+import { parseWorktrees, parseStatus, gitStatus, repoInfo, forgetRepos } from '../src/main/git.js'
 import { parseListeners, sweep } from '../src/main/processes.js'
 import { buildTree, dependentsOf, findCycles, startOrder } from '../src/shared/graph.js'
 import type { ProjectConfig, ProjectRuntime } from '../src/shared/types.js'
@@ -458,6 +458,58 @@ async function main(): Promise<void> {
   const cachedSelf = await repoInfo(process.cwd())
   check('a repeated read is served from cache with the same answer', cachedSelf?.name === self?.name)
   check('a different directory is not served the first one\'s answer', (await repoInfo('/tmp')) === null)
+
+  // --- working copy state ------------------------------------------------
+  const STATUS_V2 = [
+    '# branch.oid 6fa634bcb45f648ec8e5406c4886f99b5614b278',
+    '# branch.head feat/GC-123',
+    '# branch.upstream origin/feat/GC-123',
+    '# branch.ab +3 -1',
+    '1 .M N... 100644 100644 100644 7898192 7898192 a.txt',
+    '1 A. N... 000000 100644 100644 0000000 f2ad6c7 c.txt',
+    '2 R. N... 100644 100644 100644 aaa bbb R100 new.txt\told.txt',
+    'u UU N... 100644 100644 100644 100644 aaa bbb ccc conflict.txt',
+    '? untracked-one.txt',
+    '? untracked-two.txt'
+  ].join('\n')
+
+  const status = parseStatus(STATUS_V2)
+  check('the branch is read', status.branch === 'feat/GC-123', `${status.branch}`)
+  check('ahead and behind are read', status.ahead === 3 && status.behind === 1)
+  check(
+    'ordinary, renamed and unmerged entries all count as changed',
+    status.changed === 4,
+    `${status.changed}`
+  )
+  check('untracked files are counted separately', status.untracked === 2, `${status.untracked}`)
+  check('a working copy with changes is not clean', !status.clean)
+
+  const clean = parseStatus('# branch.oid abc\n# branch.head main\n# branch.upstream origin/main\n# branch.ab +0 -0\n')
+  check('a clean checkout reports clean', clean.clean && clean.changed === 0)
+  check('being level with upstream is zero, not absent', clean.ahead === 0 && clean.behind === 0)
+
+  // Regression: no upstream is not the same as being level with one, and must
+  // not render as "↑0 ↓0" — or worse, as if it were up to date.
+  const noUpstream = parseStatus('# branch.oid abc\n# branch.head solo\n')
+  check(
+    'a branch with no upstream has null ahead/behind, not zero',
+    noUpstream.ahead === null && noUpstream.behind === null,
+    `${noUpstream.ahead}/${noUpstream.behind}`
+  )
+  check('a branch with no upstream still reports its name', noUpstream.branch === 'solo')
+
+  const detachedStatus = parseStatus('# branch.oid abc\n# branch.head (detached)\n')
+  check(
+    'a detached head is flagged and has no branch name',
+    detachedStatus.detached && detachedStatus.branch === null
+  )
+
+  // Against the real repository the suite is running in.
+  forgetRepos()
+  const selfStatus = await gitStatus(process.cwd())
+  check('gitStatus reads the repository it runs in', selfStatus !== null)
+  check('the current branch is reported', !!selfStatus?.branch, `${selfStatus?.branch}`)
+  check('gitStatus returns null outside a repository', (await gitStatus('/tmp')) === null)
 
   // --- external processes ------------------------------------------------
   const LSOF = [

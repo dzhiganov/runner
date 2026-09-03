@@ -4,6 +4,7 @@ import { buildTree, type TreeNode } from '@shared/graph.js'
 import TerminalHost from './components/TerminalHost.js'
 import ConfigEditor from './components/ConfigEditor.js'
 import DiscoverDialog from './components/DiscoverDialog.js'
+import LogView from './components/LogView.js'
 import {
   AlertIcon,
   BoxIcon,
@@ -11,6 +12,7 @@ import {
   ExternalLinkIcon,
   LayersIcon,
   PlayIcon,
+  ListIcon,
   SearchIcon,
   SpinnerIcon,
   StopIcon
@@ -77,6 +79,8 @@ export default function App(): React.JSX.Element {
   const [activeId, setActiveId] = useState<string | null>(null)
   const [editing, setEditing] = useState<{ open: boolean; id?: string | null }>({ open: false })
   const [discovering, setDiscovering] = useState(false)
+  /** The merged log view replaces the project pane while it is open. */
+  const [showLogs, setShowLogs] = useState(false)
   const [now, setNow] = useState(() => Date.now())
   const [dragId, setDragId] = useState<string | null>(null)
   const [dropId, setDropId] = useState<string | null>(null)
@@ -231,13 +235,16 @@ export default function App(): React.JSX.Element {
         <div
           className={[
             'project',
-            project.id === activeId ? 'on' : '',
+            project.id === activeId && !showLogs ? 'on' : '',
             dragId === project.id ? 'dragging' : '',
             dropId === project.id && dragId !== project.id ? 'drop-target' : ''
           ]
             .filter(Boolean)
             .join(' ')}
-          onClick={() => setActiveId(project.id)}
+          onClick={() => {
+            setActiveId(project.id)
+            setShowLogs(false)
+          }}
           // Reordering only makes sense between siblings at the root: a child's
           // position is dictated by the dependency that owns it.
           draggable={isRoot}
@@ -380,6 +387,16 @@ export default function App(): React.JSX.Element {
         </div>
 
         <div className="project-list">
+          {config.projects.length > 0 && (
+            <button
+              className={`logs-entry ${showLogs ? 'on' : ''}`}
+              onClick={() => setShowLogs(true)}
+            >
+              <ListIcon size={13} />
+              All logs
+            </button>
+          )}
+
           {tree.map((node) => renderNode(node, true))}
 
           {config.projects.length === 0 && (
@@ -391,7 +408,9 @@ export default function App(): React.JSX.Element {
       </aside>
 
       <main className="main">
-        {active && activeRuntime ? (
+        {showLogs ? (
+          <LogView projects={config.projects} />
+        ) : active && activeRuntime ? (
           <>
             <header className="toolbar">
               <div className="toolbar-title">
@@ -494,7 +513,10 @@ export default function App(): React.JSX.Element {
                       key={dep.id}
                       className={`dep-chip ${depRuntime.status}`}
                       title={`${dep.name} — ${STATUS_LABEL[depRuntime.status]}`}
-                      onClick={() => setActiveId(dep.id)}
+                      onClick={() => {
+                        setActiveId(dep.id)
+                        setShowLogs(false)
+                      }}
                     >
                       {BUSY.includes(depRuntime.status) && <SpinnerIcon size={9} />}
                       {BROKEN.includes(depRuntime.status) && <AlertIcon size={10} />}

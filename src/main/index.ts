@@ -1,9 +1,11 @@
 import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
+import { writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { electronApp, is, optimizer } from '@electron-toolkit/utils'
 import { randomUUID } from 'node:crypto'
 import type {
   DiscoveredProject,
+  LogQuery,
   ProjectConfig,
   RunnerConfig,
   SaveConfigResult
@@ -12,11 +14,13 @@ import { configPath, expandPath, loadConfig, newProject, readConfigRaw, validate
 import { ProcessManager } from './process-manager.js'
 import { Orchestrator } from './orchestrator.js'
 import { defaultRoots, fallbackCommand, scan, tildify } from './discovery.js'
+import { LogStore } from './log-store.js'
 
 let mainWindow: BrowserWindow | null = null
 let config: RunnerConfig = { projects: [] }
 const manager = new ProcessManager()
 const orchestrator = new Orchestrator(manager, () => config.projects)
+const logs = new LogStore()
 
 /** How often stopped projects are re-checked for port availability. */
 const PORT_POLL_MS = 4_000
@@ -67,8 +71,18 @@ function createWindow(): void {
   }
 }
 
-manager.on('data', (projectId, chunk) => send('pty:data', projectId, chunk))
-manager.on('runtime', (runtime) => send('runtime:update', runtime))
+manager.on('data', (projectId, chunk) => {
+  send('pty:data', projectId, chunk)
+  // The merged view reads the same stream rather than a second capture path,
+  // so the two can never disagree about what a project said.
+  logs.ingest(projectId, chunk)
+})
+manager.on('runtime', (runtime) => {
+  // A project that exits without a trailing newline still has a last line.
+  if (runtime.status === 'exited' || runtime.status === 'error') logs.flush(runtime.id)
+  send('runtime:update', runtime)
+})
+logs.on('line', (line) => send('logs:line', line))
 // Auto-open is decided in the process manager, which watches the port; the
 // browser itself is the main process's to reach.
 manager.on('open', (_projectId, url) => void shell.openExternal(url))
@@ -77,7 +91,9 @@ manager.on('open', (_projectId, url) => void shell.openExternal(url))
 function adopt(next: RunnerConfig): void {
   config = next
   writeConfig(config)
-  manager.prune(new Set(config.projects.map((p) => p.id)))
+  const live = new Set(config.projects.map((p) => p.id))
+  manager.prune(live)
+  logs.prune(live)
   send('config:changed', config)
   // A project may have just gained or lost a port list.
   refreshPorts()
@@ -191,6 +207,9 @@ function registerIpc(): void {
     if (project) await manager.restart(project)
   })
 
+  ipcMain.handle('logs:query', (_event, query: LogQuery) => logs.query(query))
+  ipcMain.handle('logs:clear', (_event, projectId?: string) => logs.clear(projectId))
+
   ipcMain.handle('runtime:all', () => manager.allRuntimes())
   ipcMain.handle('pty:buffer', (_event, id: string) => manager.buffer(id))
   ipcMain.handle('pty:clear', (_event, id: string) => manager.clearBuffer(id))
@@ -205,6 +224,15 @@ function registerIpc(): void {
   ipcMain.handle('shell:openPath', (_event, path: string) =>
     shell.openPath(expandPath(path))
   )
+
+  /** Writes text to a file the user picks. Returns the path, or null if cancelled. */
+  ipcMain.handle('dialog:saveText', async (_event, suggested: string, body: string) => {
+    if (!mainWindow) return null
+    const result = await dialog.showSaveDialog(mainWindow, { defaultPath: suggested })
+    if (result.canceled || !result.filePath) return null
+    await writeFile(result.filePath, body, 'utf8')
+    return result.filePath
+  })
 
   ipcMain.handle('dialog:pickDirectory', async (_event, current?: string) => {
     if (!mainWindow) return null

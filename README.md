@@ -178,6 +178,44 @@ not yet group worktrees under the repository they belong to.
 
 ---
 
+## Reading the logs
+
+Each project has its own terminal, which is the right tool for interacting with
+one process. It is the wrong one for "which of my seven services just threw
+that error", so **All logs** in the sidebar merges every project's output into
+one stream.
+
+```text
+20:28:38  api       ready on http://localhost:4300
+20:28:38  api       200 GET /products?page=1
+20:28:38  frontend  frontend booting
+20:28:39  api       ERROR database connection refused
+20:28:39  admin     Compiled successfully
+```
+
+Search matches across every service at once. The **Errors** and **Warnings**
+tabs narrow by level, and the chips under the toolbar narrow by project; the
+two combine.
+
+A line's level comes from its colour first and its text second. A dev server
+that paints a line red has said what it means more directly than any pattern
+match can infer, so that wins; failing that, `ERROR`, `npm ERR!`, `FATAL`,
+`WARN` and friends are matched as whole words. Deliberately as whole words:
+`error` appears inside `errorHandler.ts` and in `webpack compiled with no
+errors`, and colouring those red would make the filter useless.
+
+**Following** is on until you scroll up, and the button turns it off entirely.
+New output keeps being collected while it is paused — pausing stops the view
+moving, not the recording.
+
+Copy puts the visible lines on the clipboard; Export writes them to a file.
+Both take what the filters currently show, not the whole buffer.
+
+The merged view holds 20,000 lines and drops the oldest beyond that. It is not
+written to disk, so it starts empty each launch.
+
+---
+
 ## Settings
 
 Every project is configured from a form, with a **Raw JSON** tab for when that

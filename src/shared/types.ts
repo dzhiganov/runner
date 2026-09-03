@@ -144,6 +144,32 @@ export interface ProjectRuntime {
   restartAttempts: number
 }
 
+/** How a log line is classified, for the errors/warnings filter. */
+export type LogLevel = 'info' | 'warn' | 'error'
+
+/** One line of a project's output, in the merged view. */
+export interface LogLine {
+  /** Monotonic across every project — the merge order, and a stable React key. */
+  seq: number
+  projectId: string
+  /** When the chunk carrying this line arrived. */
+  at: number
+  level: LogLevel
+  /** The line with its ANSI escapes stripped and trailing space trimmed. */
+  text: string
+}
+
+export interface LogQuery {
+  /** Case-insensitive substring match against the line text. */
+  search?: string
+  /** Restrict to these projects. Empty or absent means all of them. */
+  projectIds?: string[]
+  /** Restrict to these levels. Empty or absent means all of them. */
+  levels?: LogLevel[]
+  /** Newest N matches. Defaults to 2000. */
+  limit?: number
+}
+
 export interface ConfigValidationIssue {
   path: string
   message: string

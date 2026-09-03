@@ -139,3 +139,13 @@ export function SearchIcon(props: IconProps): React.JSX.Element {
     </Svg>
   )
 }
+
+/** The merged log view: several streams stacked into one. */
+export function ListIcon(props: IconProps): React.JSX.Element {
+  return (
+    <Svg {...props}>
+      <path d="M8 6h13M8 12h13M8 18h13" />
+      <path d="M3 6h.01M3 12h.01M3 18h.01" />
+    </Svg>
+  )
+}

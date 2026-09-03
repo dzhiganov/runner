@@ -6,6 +6,7 @@ import { randomUUID } from 'node:crypto'
 import type {
   DiscoveredProject,
   LogQuery,
+  PortConflict,
   ProjectConfig,
   RunnerConfig,
   SaveConfigResult
@@ -15,6 +16,8 @@ import { ProcessManager } from './process-manager.js'
 import { Orchestrator } from './orchestrator.js'
 import { defaultRoots, fallbackCommand, scan, tildify } from './discovery.js'
 import { LogStore } from './log-store.js'
+import { classify, killOwner } from './port-conflict.js'
+import { isPortFree, waitForPortsFree } from './ports.js'
 
 let mainWindow: BrowserWindow | null = null
 let config: RunnerConfig = { projects: [] }
@@ -206,6 +209,71 @@ function registerIpc(): void {
     const project = findProject(id)
     if (project) await manager.restart(project)
   })
+
+  // --- port conflicts ----------------------------------------------------
+
+  /**
+   * Who is holding each of a project's ports that is currently busy.
+   *
+   * Empty when the project can start. One entry per busy port rather than just
+   * the first: when a project lists three ports and all three are taken, the
+   * useful answer names all three.
+   */
+  ipcMain.handle('ports:inspect', async (_event, id: string): Promise<PortConflict[]> => {
+    const project = findProject(id)
+    if (!project?.port?.length) return []
+
+    const states = await Promise.all(
+      project.port.map(async (port) => ({ port, free: await isPortFree(port) }))
+    )
+    const free = states.filter((s) => s.free).map((s) => s.port)
+    const busy = states.filter((s) => !s.free).map((s) => s.port)
+
+    return Promise.all(
+      busy.map((port) =>
+        classify(
+          project,
+          port,
+          config.projects,
+          (owner) => manager.runtime(owner).pid,
+          free
+        )
+      )
+    )
+  })
+
+  /**
+   * Frees a port and starts the project that wanted it.
+   *
+   * A Runner-owned process is stopped through the orchestrator rather than
+   * signalled behind its own back, so its dependency tree and auto-restart
+   * budget are handled the way a deliberate stop always is.
+   */
+  ipcMain.handle(
+    'ports:resolve',
+    async (_event, conflict: PortConflict): Promise<{ ok: boolean; message?: string }> => {
+      const project = findProject(conflict.projectId)
+      if (!project) return { ok: false, message: 'That project no longer exists.' }
+
+      if (conflict.tier === 'unknown' || !conflict.owner) {
+        return { ok: false, message: 'Runner will not kill a process it cannot identify.' }
+      }
+
+      if (conflict.tier === 'runner' && conflict.ownerProjectId) {
+        orchestrator.cancel(conflict.ownerProjectId)
+        manager.stop(conflict.ownerProjectId, findProject(conflict.ownerProjectId))
+        const freed = await waitForPortsFree([conflict.port], 8_000)
+        if (!freed) return { ok: false, message: `Port ${conflict.port} did not come back.` }
+      } else {
+        const result = await killOwner(conflict.owner, conflict.port)
+        if (!result.ok) return { ok: false, message: result.reason }
+      }
+
+      await orchestrator.startTree(project.id)
+      refreshPorts()
+      return { ok: true }
+    }
+  )
 
   ipcMain.handle('logs:query', (_event, query: LogQuery) => logs.query(query))
   ipcMain.handle('logs:clear', (_event, projectId?: string) => logs.clear(projectId))

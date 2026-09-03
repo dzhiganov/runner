@@ -1187,3 +1187,105 @@ input.narrow {
 .logs-line.warn {
   box-shadow: inset 2px 0 0 var(--amber);
 }
+
+/* --- port conflicts ------------------------------------------------------- */
+
+.editor.conflict {
+  height: auto;
+  max-height: 88vh;
+  width: min(720px, 92vw);
+}
+
+.conflict-body {
+  overflow-y: auto;
+  padding: 6px 8px;
+}
+
+.conflict-row {
+  display: grid;
+  grid-template-columns: 150px minmax(0, 1fr) auto;
+  gap: 14px;
+  align-items: center;
+  padding: 12px;
+  border-radius: var(--radius);
+}
+
+.conflict-row + .conflict-row {
+  border-top: 1px solid var(--line);
+}
+
+.conflict-row.runner {
+  box-shadow: inset 3px 0 0 var(--green);
+}
+
+.conflict-row.known {
+  box-shadow: inset 3px 0 0 var(--amber);
+}
+
+.conflict-row.unknown {
+  box-shadow: inset 3px 0 0 var(--red);
+}
+
+.conflict-port {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.conflict-port strong {
+  font-family: SFMono-Regular, Menlo, monospace;
+  font-size: 15px;
+}
+
+.conflict-tier {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.conflict-owner {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.conflict-project {
+  font-weight: 500;
+}
+
+.conflict-cmd {
+  font-family: SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  color: var(--amber);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.conflict-meta {
+  font-size: 11px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.conflict-refused {
+  font-size: 11px;
+  color: var(--red);
+  white-space: nowrap;
+}
+
+.conflict-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px;
+  border-top: 1px solid var(--line);
+}
+
+.conflict-foot .muted {
+  color: var(--muted);
+  font-size: 12px;
+  text-align: right;
+}

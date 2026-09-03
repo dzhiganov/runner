@@ -1,4 +1,5 @@
 import { createServer } from 'node:net'
+import { spawn } from 'node:child_process'
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir, userInfo } from 'node:os'
@@ -8,6 +9,8 @@ import { resolvePort, isPortFree, waitForPort, waitForPortsFree } from '../src/m
 import { migrate, validateConfig } from '../src/main/config-validate.js'
 import { fallbackCommand, inspect, scan, tildify } from '../src/main/discovery.js'
 import { LogStore, levelOf } from '../src/main/log-store.js'
+import { whoHolds, groupIsSafeToKill } from '../src/main/port-owner.js'
+import { classify, killOwner, projectAt } from '../src/main/port-conflict.js'
 import { buildTree, dependentsOf, findCycles, startOrder } from '../src/shared/graph.js'
 import type { ProjectConfig, ProjectRuntime } from '../src/shared/types.js'
 
@@ -390,6 +393,111 @@ async function main(): Promise<void> {
     big.size() <= 20_000 && kept[kept.length - 1].text === 'line 24999',
     `held ${big.size()}`
   )
+
+  // --- port ownership ----------------------------------------------------
+  // A real listener, so lsof is exercised rather than mocked: the whole value
+  // of this feature is that it reports what the OS actually says.
+  const owned = createServer(() => {})
+  await new Promise<void>((resolve) => owned.listen(4711, '0.0.0.0', resolve))
+
+  const holder = await whoHolds(4711)
+  check('whoHolds finds the process on a held port', holder?.pid === process.pid, `${holder?.pid}`)
+  check('whoHolds reports a command', !!holder?.command && holder.command !== 'unknown', holder?.command)
+  check(
+    'whoHolds reports the working directory',
+    holder?.cwd === process.cwd(),
+    `${holder?.cwd}`
+  )
+  check('whoHolds reports a process group', typeof holder?.pgid === 'number')
+  check('whoHolds returns null for a port nobody holds', (await whoHolds(4712)) === null)
+
+  // Safety: the group may only be signalled when the listener leads it. A
+  // group it merely belongs to is somebody else's — a shell job, a parent
+  // script, this very test runner — and killing that because a port was busy
+  // would take down far more than the dev server in question.
+  check(
+    'a process that leads its own group may be group-killed',
+    holder ? groupIsSafeToKill({ ...holder, pgid: holder.pid }) : false
+  )
+  check(
+    'a process that merely belongs to a group may not be',
+    holder ? !groupIsSafeToKill({ ...holder, pgid: holder.pid + 1 }) : false
+  )
+  check(
+    'nothing is group-killed when the group id is unknown',
+    holder ? !groupIsSafeToKill({ ...holder, pgid: null }) : false
+  )
+
+  // --- conflict tiers ----------------------------------------------------
+  const here = process.cwd()
+  const tierProjects: ProjectConfig[] = [
+    { id: 'mine', name: 'mine', path: here, runCommand: 'x' },
+    { id: 'other', name: 'other', path: '/nowhere/at/all', runCommand: 'x' }
+  ]
+
+  const asRunner = await classify(
+    tierProjects[1],
+    4711,
+    tierProjects,
+    (id) => (id === 'mine' ? 4242 : null),
+    []
+  )
+  check('a process Runner started is the runner tier', asRunner.tier === 'runner', asRunner.tier)
+  check('the runner tier names the project holding the port', asRunner.ownerProjectName === 'mine')
+
+  const asKnown = await classify(tierProjects[1], 4711, tierProjects, () => null, [3001])
+  check('a matching directory with no Runner pid is the known tier', asKnown.tier === 'known', asKnown.tier)
+  check('free ports are carried through as alternatives', asKnown.alternatives.join() === '3001')
+
+  const asUnknown = await classify(tierProjects[1], 4711, [tierProjects[1]], () => null, [])
+  check('a directory matching no project is the unknown tier', asUnknown.tier === 'unknown', asUnknown.tier)
+  check('the unknown tier still reports the pid', asUnknown.owner?.pid === process.pid)
+
+  // A dev server run from a subdirectory of a configured project is still that
+  // project's process.
+  check(
+    'a subdirectory of a project matches that project',
+    projectAt(join(here, 'src/main'), tierProjects)?.id === 'mine'
+  )
+  check('an unrelated directory matches nothing', projectAt('/var/log', tierProjects) === null)
+  check('a null working directory matches nothing', projectAt(null, tierProjects) === null)
+
+  // Nested projects: the deeper configured root is the more specific claim.
+  const nested: ProjectConfig[] = [
+    { id: 'outer', name: 'outer', path: here, runCommand: 'x' },
+    { id: 'inner', name: 'inner', path: join(here, 'src'), runCommand: 'x' }
+  ]
+  check(
+    'the deepest matching project wins',
+    projectAt(join(here, 'src/main'), nested)?.id === 'inner'
+  )
+
+  await new Promise<void>((resolve) => owned.close(() => resolve()))
+
+  // --- freeing a port ----------------------------------------------------
+  // A separate process, because killOwner really does kill what it is given.
+  const victim = spawn(process.execPath, [
+    '-e',
+    "require('http').createServer(()=>{}).listen(4713,()=>console.log('up'))"
+  ])
+  // Bounded, and reported: waiting forever turns a stale listener on 4713 —
+  // exactly what a broken killOwner leaves behind — into a suite that prints
+  // nothing at all and exits 0, which reads as "no tests" rather than "bug".
+  const victimUp = await Promise.race([
+    new Promise<boolean>((resolve) => victim.stdout.once('data', () => resolve(true))),
+    new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 5_000))
+  ])
+  check('the victim process started', victimUp, 'is something already on 4713?')
+
+  const victimOwner = await whoHolds(4713)
+  check('the victim is found on its port', victimOwner?.pid === victim.pid, `${victimOwner?.pid}`)
+
+  const killed = victimOwner
+    ? await killOwner(victimOwner, 4713)
+    : { ok: false as const, reason: 'not found' }
+  check('killOwner reports success', killed.ok, 'reason' in killed ? killed.reason : '')
+  check('the port is actually free afterwards', await isPortFree(4713))
+  check('the process is really gone', (await whoHolds(4713)) === null)
 
   // --- shell selection ---------------------------------------------------
   // Regression: an inherited SHELL (from `open`, a launcher, a parent script)

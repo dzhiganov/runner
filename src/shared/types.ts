@@ -62,6 +62,11 @@ export interface ProjectConfig {
   shell?: string
   /** Working directory override. Defaults to `path`. */
   cwd?: string
+  /**
+   * Restart when a source file in the project changes. Off by default.
+   * `node_modules`, build output and dotfiles are never watched.
+   */
+  watch?: boolean
 }
 
 /** Desktop notifications for projects becoming ready, failing, or crashing. */

@@ -1559,3 +1559,23 @@ input.narrow {
 .dot.broken {
   background: var(--red);
 }
+
+/* --- sidebar filter ------------------------------------------------------- */
+
+/*
+ * Only rendered past a handful of projects. Below that it is a box asking to
+ * be typed into to narrow a list you can already read in one glance.
+ */
+.sidebar-filter {
+  margin: 0 8px 6px;
+  background: var(--bg-term);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 5px 9px;
+  font-size: 12px;
+  outline: none;
+}
+
+.sidebar-filter:focus {
+  border-color: var(--accent);
+}

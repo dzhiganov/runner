@@ -5,6 +5,8 @@ interface Props {
   projects: ProjectConfig[]
   /** One entry per running project, for the aggregate in the footer. */
   resources: ProjectResources[]
+  /** Open filtered to this project. Null opens showing everything. */
+  initialProjectId?: string | null
 }
 
 /** How many lines the view holds before dropping the oldest from the top. */
@@ -33,13 +35,24 @@ function formatBytes(bytes: number): string {
   return `${(mb / 1024).toFixed(1)} GB`
 }
 
-export default function LogView({ projects, resources }: Props): React.JSX.Element {
+export default function LogView({
+  projects,
+  resources,
+  initialProjectId
+}: Props): React.JSX.Element {
   const [lines, setLines] = useState<LogLine[]>([])
   const [search, setSearch] = useState('')
   const [levelIndex, setLevelIndex] = useState(0)
-  const [selected, setSelected] = useState<Set<string>>(new Set())
+  const [selected, setSelected] = useState<Set<string>>(
+    () => new Set(initialProjectId ? [initialProjectId] : [])
+  )
   const [paused, setPaused] = useState(false)
   const [copied, setCopied] = useState(false)
+
+  // Arriving from a different project's Logs button re-narrows the view.
+  useEffect(() => {
+    setSelected(new Set(initialProjectId ? [initialProjectId] : []))
+  }, [initialProjectId])
 
   const scroller = useRef<HTMLDivElement | null>(null)
   /** Whether the view was pinned to the bottom before the last render. */

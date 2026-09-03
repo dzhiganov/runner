@@ -14,6 +14,7 @@ import { classify, killOwner, projectAt } from '../src/main/port-conflict.js'
 import { parseWorktrees, parseStatus, gitStatus, repoInfo, forgetRepos } from '../src/main/git.js'
 import { parseListeners, sweep } from '../src/main/processes.js'
 import { score } from '../src/shared/fuzzy.js'
+import { decide } from '../src/shared/notify-rules.js'
 import { buildTree, dependentsOf, findCycles, startOrder } from '../src/shared/graph.js'
 import type { ProjectConfig, ProjectRuntime } from '../src/shared/types.js'
 
@@ -459,6 +460,113 @@ async function main(): Promise<void> {
   const cachedSelf = await repoInfo(process.cwd())
   check('a repeated read is served from cache with the same answer', cachedSelf?.name === self?.name)
   check('a different directory is not served the first one\'s answer', (await repoInfo('/tmp')) === null)
+
+  // --- notifications -----------------------------------------------------
+  const runtimeOf = (over: Partial<ProjectRuntime> = {}): ProjectRuntime => ({
+    id: 'p',
+    status: 'stopped',
+    port: null,
+    detectedPorts: [],
+    portsBusy: false,
+    pid: null,
+    exitCode: null,
+    message: null,
+    startedAt: null,
+    waitingFor: null,
+    restartAttempts: 0,
+    ...over
+  })
+  const on = { enabled: true }
+
+  check(
+    'becoming ready is announced with its port',
+    decide(runtimeOf({ status: 'starting' }), runtimeOf({ status: 'running', port: 3000 }), 'api', on)?.body ===
+      'Listening on port 3000'
+  )
+  check(
+    'a port the project announced itself wins over the assigned one',
+    decide(
+      runtimeOf({ status: 'starting' }),
+      runtimeOf({ status: 'running', port: 3000, detectedPorts: [4200] }),
+      'api',
+      on
+    )?.body === 'Listening on port 4200'
+  )
+  check(
+    'a failure to start is announced with its reason',
+    decide(runtimeOf({ status: 'starting' }), runtimeOf({ status: 'error', message: 'Directory not found' }), 'api', on)
+      ?.title === 'api failed to start'
+  )
+  check(
+    'a crash is announced with its exit code',
+    decide(runtimeOf({ status: 'running' }), runtimeOf({ status: 'exited', exitCode: 7 }), 'api', on)?.body ===
+      'Exited with code 7'
+  )
+  check(
+    'a crash mid-retry says which attempt it is',
+    decide(
+      runtimeOf({ status: 'running' }),
+      runtimeOf({ status: 'exited', exitCode: 7, restartAttempts: 2 }),
+      'api',
+      on
+    )?.body === 'Exited with code 7 · restart attempt 2'
+  )
+
+  // The rule the roadmap is explicit about: do not notify on the transition
+  // Runner itself caused.
+  check(
+    'a stop the user asked for is not announced',
+    decide(runtimeOf({ status: 'running' }), runtimeOf({ status: 'stopped' }), 'api', on) === null
+  )
+  check(
+    'a stop in progress is not announced',
+    decide(runtimeOf({ status: 'running' }), runtimeOf({ status: 'stopping' }), 'api', on) === null
+  )
+
+  // Runtime events fire for port polls and elapsed-time ticks too, so an
+  // unchanged status must stay silent or a crashed project alerts forever.
+  check(
+    'an unchanged status is not announced again',
+    decide(runtimeOf({ status: 'exited', exitCode: 1 }), runtimeOf({ status: 'exited', exitCode: 1 }), 'api', on) === null
+  )
+  check(
+    'a project still running is not re-announced',
+    decide(runtimeOf({ status: 'running', startedAt: 1 }), runtimeOf({ status: 'running', startedAt: 1 }), 'api', on) === null
+  )
+
+  check(
+    'losing the last free port is announced',
+    decide(runtimeOf({ portsBusy: false }), runtimeOf({ portsBusy: true }), 'api', on)?.title === 'api has no free port'
+  )
+  check(
+    'regaining a free port is not announced',
+    decide(runtimeOf({ portsBusy: true }), runtimeOf({ portsBusy: false }), 'api', on) === null
+  )
+
+  check(
+    'nothing is announced when notifications are off',
+    decide(runtimeOf({ status: 'running' }), runtimeOf({ status: 'exited', exitCode: 1 }), 'api', { enabled: false }) === null
+  )
+  check(
+    'failures-only suppresses readiness but not crashes',
+    decide(runtimeOf({ status: 'starting' }), runtimeOf({ status: 'running' }), 'api', { enabled: true, failuresOnly: true }) ===
+      null &&
+      decide(runtimeOf({ status: 'running' }), runtimeOf({ status: 'exited', exitCode: 1 }), 'api', {
+        enabled: true,
+        failuresOnly: true
+      }) !== null
+  )
+
+  const notifyConfig = validateConfig({ projects: [], notifications: { enabled: true, failuresOnly: true } })
+  check(
+    'notification settings survive validation',
+    notifyConfig.ok && notifyConfig.config.notifications?.failuresOnly === true
+  )
+  const notifyShorthand = validateConfig({ projects: [], notifications: false })
+  check(
+    'a bare boolean is accepted as shorthand',
+    notifyShorthand.ok && notifyShorthand.config.notifications?.enabled === false
+  )
 
   // --- command palette matching ------------------------------------------
   check('an empty query matches everything', score('', 'Restart api') === 0)

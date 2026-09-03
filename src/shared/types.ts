@@ -171,6 +171,29 @@ export interface RepoInfo {
   worktrees: Worktree[]
 }
 
+/**
+ * A listening process Runner did not start, attributed to a project.
+ *
+ * This is how Runner answers "what is actually running" rather than only
+ * "what did I start" — a dev server launched by hand in a terminal shows up
+ * on the project it belongs to, instead of leaving that project looking
+ * stopped while its port is mysteriously busy.
+ */
+export interface ExternalProcess {
+  pid: number
+  /** Full command line where `ps` would give one. */
+  command: string
+  cwd: string | null
+  /** Every port this process is listening on, ascending. */
+  ports: number[]
+  /** The configured project whose directory contains it. */
+  projectId: string
+  /** The worktree it is running in, when the project is in a repository. */
+  worktreePath: string | null
+  /** Branch of that worktree, when it has one. */
+  branch: string | null
+}
+
 /** A configured project placed in its repository, for the grouped sidebar. */
 export interface ProjectGit {
   projectId: string

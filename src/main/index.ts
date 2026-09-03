@@ -6,9 +6,11 @@ import { randomUUID } from 'node:crypto'
 import type {
   DiscoveredProject,
   LogQuery,
+  ExternalProcess,
   PortConflict,
   ProjectGit,
   ProjectConfig,
+  RepoInfo,
   RunnerConfig,
   SaveConfigResult
 } from '../shared/types.js'
@@ -19,6 +21,7 @@ import { defaultRoots, fallbackCommand, inspect, scan, tildify } from './discove
 import { LogStore } from './log-store.js'
 import { classify, killOwner } from './port-conflict.js'
 import { forgetRepos, repoInfo } from './git.js'
+import { sweep } from './processes.js'
 import { isPortFree, waitForPortsFree } from './ports.js'
 
 let mainWindow: BrowserWindow | null = null
@@ -30,6 +33,42 @@ const logs = new LogStore()
 /** How often stopped projects are re-checked for port availability. */
 const PORT_POLL_MS = 4_000
 let portPoll: NodeJS.Timeout | null = null
+
+/**
+ * How often the machine is swept for dev servers Runner did not start.
+ *
+ * Slower than the port poll: this shells out to `lsof` and `ps`, and a process
+ * someone started by hand in a terminal is not something that needs noticing
+ * within a second.
+ */
+const SWEEP_MS = 6_000
+let sweepPoll: NodeJS.Timeout | null = null
+let externals: ExternalProcess[] = []
+
+async function refreshExternals(): Promise<void> {
+  const found = await sweep(
+    config.projects,
+    (projectId) => manager.isRunning(projectId),
+    (projectId) => {
+      const project = findProject(projectId)
+      return project ? (repoCache.get(project.id) ?? null) : null
+    }
+  )
+  // Only tell the renderer when something actually changed; this fires every
+  // few seconds and would otherwise re-render the sidebar for nothing.
+  if (JSON.stringify(found) === JSON.stringify(externals)) return
+  externals = found
+  send('externals:update', externals)
+}
+
+/** Repository per project, kept warm so the sweep does not re-shell for it. */
+const repoCache = new Map<string, RepoInfo | null>()
+
+async function refreshRepos(): Promise<void> {
+  for (const project of config.projects) {
+    repoCache.set(project.id, await repoInfo(project.cwd ?? project.path))
+  }
+}
 
 function refreshPorts(): void {
   void manager.refreshPortAvailability(config.projects)
@@ -100,6 +139,8 @@ function adopt(next: RunnerConfig): void {
   manager.prune(live)
   logs.prune(live)
   forgetRepos()
+  repoCache.clear()
+  void refreshRepos().then(refreshExternals)
   send('config:changed', config)
   // A project may have just gained or lost a port list.
   refreshPorts()
@@ -268,7 +309,15 @@ function registerIpc(): void {
     return found
   })
 
-  ipcMain.handle('git:refresh', () => forgetRepos())
+  ipcMain.handle('git:refresh', () => {
+    forgetRepos()
+  repoCache.clear()
+  void refreshRepos().then(refreshExternals)
+    repoCache.clear()
+    void refreshRepos()
+  })
+
+  ipcMain.handle('processes:external', () => externals)
 
   // --- port conflicts ----------------------------------------------------
 
@@ -383,6 +432,9 @@ app.whenReady().then(() => {
   refreshPorts()
   portPoll = setInterval(refreshPorts, PORT_POLL_MS)
 
+  void refreshRepos().then(refreshExternals)
+  sweepPoll = setInterval(() => void refreshExternals(), SWEEP_MS)
+
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
   })
@@ -409,6 +461,7 @@ app.on('before-quit', (event) => {
 
   quitConfirmed = true
   if (portPoll) clearInterval(portPoll)
+  if (sweepPoll) clearInterval(sweepPoll)
   manager.stopAll().finally(() => app.quit())
 })
 

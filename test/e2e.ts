@@ -13,6 +13,7 @@ import { whoHolds, groupIsSafeToKill } from '../src/main/port-owner.js'
 import { classify, killOwner, projectAt } from '../src/main/port-conflict.js'
 import { parseWorktrees, parseStatus, gitStatus, repoInfo, forgetRepos } from '../src/main/git.js'
 import { parseListeners, sweep } from '../src/main/processes.js'
+import { score } from '../src/shared/fuzzy.js'
 import { buildTree, dependentsOf, findCycles, startOrder } from '../src/shared/graph.js'
 import type { ProjectConfig, ProjectRuntime } from '../src/shared/types.js'
 
@@ -458,6 +459,29 @@ async function main(): Promise<void> {
   const cachedSelf = await repoInfo(process.cwd())
   check('a repeated read is served from cache with the same answer', cachedSelf?.name === self?.name)
   check('a different directory is not served the first one\'s answer', (await repoInfo('/tmp')) === null)
+
+  // --- command palette matching ------------------------------------------
+  check('an empty query matches everything', score('', 'Restart api') === 0)
+  check('a query absent from the text does not match', score('zzz', 'Restart api') === null)
+  check('an exact prefix matches', score('res', 'Restart api') !== null)
+
+  // A subsequence, not a substring: this is what makes `gc` find the thing.
+  check('characters may be separated', score('gc', 'Start GC frontend') !== null)
+  check('order matters — the same letters reversed do not match', score('cg', 'Start GC') === null)
+  check('matching is case-insensitive', score('RESTART', 'restart api') !== null)
+
+  // Ranking: a word-boundary match must beat one buried mid-word, or typing
+  // `res` puts the wrong row first.
+  const boundary = score('rest', 'Restart api')!
+  const buried = score('rest', 'Configure forest')!
+  check('a match at a word boundary outranks one mid-word', boundary < buried, `${boundary} vs ${buried}`)
+
+  const tight = score('api', 'Stop api')!
+  const loose = score('api', 'A place for interesting things')!
+  check('a contiguous match outranks a scattered one', tight < loose, `${tight} vs ${loose}`)
+
+  // The hint is searched with the title, so a project name finds its commands.
+  check('a project name matches its command line', score('api', 'Restart api api') !== null)
 
   // --- working copy state ------------------------------------------------
   const STATUS_V2 = [

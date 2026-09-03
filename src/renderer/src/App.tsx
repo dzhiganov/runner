@@ -3,6 +3,7 @@ import type { ProjectConfig, ProjectRuntime, RunnerConfig } from '@shared/types.
 import { buildTree, type TreeNode } from '@shared/graph.js'
 import TerminalHost from './components/TerminalHost.js'
 import ConfigEditor from './components/ConfigEditor.js'
+import DiscoverDialog from './components/DiscoverDialog.js'
 import {
   AlertIcon,
   BoxIcon,
@@ -10,6 +11,7 @@ import {
   ExternalLinkIcon,
   LayersIcon,
   PlayIcon,
+  SearchIcon,
   SpinnerIcon,
   StopIcon
 } from './components/Icons.js'
@@ -74,6 +76,7 @@ export default function App(): React.JSX.Element {
   const [runtimes, setRuntimes] = useState<Record<string, ProjectRuntime>>({})
   const [activeId, setActiveId] = useState<string | null>(null)
   const [editing, setEditing] = useState<{ open: boolean; id?: string | null }>({ open: false })
+  const [discovering, setDiscovering] = useState(false)
   const [now, setNow] = useState(() => Date.now())
   const [dragId, setDragId] = useState<string | null>(null)
   const [dropId, setDropId] = useState<string | null>(null)
@@ -362,6 +365,13 @@ export default function App(): React.JSX.Element {
           <span className="brand">Runner</span>
           <button
             className="btn ghost gear"
+            title="Find projects on disk"
+            onClick={() => setDiscovering(true)}
+          >
+            <SearchIcon size={13} />
+          </button>
+          <button
+            className="btn ghost gear"
             title="Edit configuration (⌘,)"
             onClick={() => setEditing({ open: true, id: activeId })}
           >
@@ -373,7 +383,7 @@ export default function App(): React.JSX.Element {
           {tree.map((node) => renderNode(node, true))}
 
           {config.projects.length === 0 && (
-            <button className="empty-add" onClick={() => setEditing({ open: true })}>
+            <button className="empty-add" onClick={() => setDiscovering(true)}>
               + Add your first project
             </button>
           )}
@@ -514,12 +524,27 @@ export default function App(): React.JSX.Element {
           <div className="placeholder">
             <h1>Runner</h1>
             <p>Add a project to run it here.</p>
-            <button className="btn primary" onClick={() => setEditing({ open: true })}>
-              Edit configuration
-            </button>
+            <div className="row">
+              <button className="btn primary" onClick={() => setDiscovering(true)}>
+                Find my projects
+              </button>
+              <button className="btn" onClick={() => setEditing({ open: true })}>
+                Edit configuration
+              </button>
+            </div>
           </div>
         )}
       </main>
+
+      {discovering && (
+        <DiscoverDialog
+          onClose={() => setDiscovering(false)}
+          onAdded={(next) => {
+            setConfig(next)
+            setDiscovering(false)
+          }}
+        />
+      )}
 
       {editing.open && (
         <ConfigEditor

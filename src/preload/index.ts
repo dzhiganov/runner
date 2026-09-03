@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import type {
+  DiscoveredProject,
   ProjectConfig,
   ProjectRuntime,
   RunnerConfig,
@@ -15,6 +16,16 @@ const api = {
   saveConfigRaw: (text: string): Promise<SaveConfigResult> =>
     ipcRenderer.invoke('config:saveRaw', text),
   newProject: (): Promise<ProjectConfig> => ipcRenderer.invoke('config:newProject'),
+
+  /** Configured scan roots, or likely ones when discovery is not set up yet. */
+  getScanRoots: (): Promise<string[]> => ipcRenderer.invoke('discovery:roots'),
+  saveScanRoots: (roots: string[]): Promise<SaveConfigResult> =>
+    ipcRenderer.invoke('discovery:saveRoots', roots),
+  /** Walks the roots, omitting anything already in the config. */
+  scanProjects: (roots: string[]): Promise<DiscoveredProject[]> =>
+    ipcRenderer.invoke('discovery:scan', roots),
+  addDiscovered: (found: DiscoveredProject[]): Promise<SaveConfigResult> =>
+    ipcRenderer.invoke('discovery:add', found),
 
   /** Starts the project and everything it depends on, deepest first. */
   start: (id: string): Promise<void> => ipcRenderer.invoke('project:start', id),

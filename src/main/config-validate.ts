@@ -153,6 +153,34 @@ function composeCommand(docker: unknown): string {
   return parts.join(' ')
 }
 
+/**
+ * Parses `scanRoots`, the folders discovery walks looking for projects.
+ *
+ * Paths are kept exactly as written rather than expanded: a config that says
+ * `~/Projects` should still mean the right thing on another machine, and the
+ * raw-JSON editor should show back what was typed.
+ */
+function readScanRoots(
+  raw: unknown,
+  issues: ConfigValidationIssue[]
+): string[] | undefined {
+  if (raw === undefined || raw === null) return undefined
+  if (!Array.isArray(raw)) {
+    issues.push({ path: 'scanRoots', message: '`scanRoots` must be an array of folder paths.' })
+    return undefined
+  }
+  const roots: string[] = []
+  raw.forEach((value, i) => {
+    if (typeof value !== 'string' || !value.trim()) {
+      issues.push({ path: `scanRoots[${i}]`, message: 'Scan roots must be non-empty paths.' })
+      return
+    }
+    const path = value.trim()
+    if (!roots.includes(path)) roots.push(path)
+  })
+  return roots
+}
+
 export function validateConfig(
   raw: unknown
 ): { ok: true; config: RunnerConfig } | { ok: false; issues: ConfigValidationIssue[] } {
@@ -165,6 +193,8 @@ export function validateConfig(
   if (!Array.isArray(projectsRaw)) {
     return { ok: false, issues: [{ path: 'projects', message: '`projects` must be an array.' }] }
   }
+
+  const scanRoots = readScanRoots((raw as Record<string, unknown>).scanRoots, issues)
 
   const seenNames = new Set<string>()
   const seenIds = new Set<string>()
@@ -318,5 +348,5 @@ export function validateConfig(
   }
 
   if (issues.length) return { ok: false, issues }
-  return { ok: true, config: { projects } }
+  return { ok: true, config: { projects, ...(scanRoots?.length ? { scanRoots } : {}) } }
 }

@@ -129,3 +129,13 @@ export function BoxIcon(props: IconProps): React.JSX.Element {
     </Svg>
   )
 }
+
+/** Opens the folder scan that looks for projects on disk. */
+export function SearchIcon(props: IconProps): React.JSX.Element {
+  return (
+    <Svg {...props}>
+      <circle cx="11" cy="11" r="7" />
+      <path d="m20 20-3.5-3.5" />
+    </Svg>
+  )
+}

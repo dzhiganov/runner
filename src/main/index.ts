@@ -1,10 +1,17 @@
 import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
 import { join } from 'node:path'
 import { electronApp, is, optimizer } from '@electron-toolkit/utils'
-import type { ProjectConfig, RunnerConfig, SaveConfigResult } from '../shared/types.js'
+import { randomUUID } from 'node:crypto'
+import type {
+  DiscoveredProject,
+  ProjectConfig,
+  RunnerConfig,
+  SaveConfigResult
+} from '../shared/types.js'
 import { configPath, expandPath, loadConfig, newProject, readConfigRaw, validateConfig, writeConfig } from './config.js'
 import { ProcessManager } from './process-manager.js'
 import { Orchestrator } from './orchestrator.js'
+import { defaultRoots, fallbackCommand, scan, tildify } from './discovery.js'
 
 let mainWindow: BrowserWindow | null = null
 let config: RunnerConfig = { projects: [] }
@@ -105,6 +112,54 @@ function registerIpc(): void {
   })
 
   ipcMain.handle('config:newProject', () => newProject())
+
+  // --- discovery ---------------------------------------------------------
+
+  ipcMain.handle('discovery:roots', () =>
+    config.scanRoots?.length ? config.scanRoots : defaultRoots()
+  )
+
+  ipcMain.handle('discovery:scan', (_event, roots: string[]): DiscoveredProject[] =>
+    scan(roots, config.projects.map((project) => project.path))
+  )
+
+  /**
+   * Adds scanned projects to the config.
+   *
+   * Names are made unique on the way in — two repos called `api` under
+   * different roots is normal, and validation rejects duplicates — and `port`
+   * is deliberately left unset. Guessing a port would be worse than not
+   * managing one, which Runner already handles.
+   */
+  ipcMain.handle('discovery:add', (_event, found: DiscoveredProject[]): SaveConfigResult => {
+    const taken = new Set(config.projects.map((project) => project.name))
+    const added: ProjectConfig[] = []
+
+    for (const project of found) {
+      let name = project.name
+      for (let n = 2; taken.has(name); n += 1) name = `${project.name} (${n})`
+      taken.add(name)
+
+      added.push({
+        id: randomUUID(),
+        name,
+        path: tildify(project.path),
+        runCommand: project.suggestedCommand ?? fallbackCommand(project.packageManager)
+      })
+    }
+
+    const result = validateConfig({ ...config, projects: [...config.projects, ...added] })
+    if (!result.ok) return result
+    adopt(result.config)
+    return { ok: true, config }
+  })
+
+  ipcMain.handle('discovery:saveRoots', (_event, roots: string[]): SaveConfigResult => {
+    const result = validateConfig({ ...config, scanRoots: roots })
+    if (!result.ok) return result
+    adopt(result.config)
+    return { ok: true, config }
+  })
 
   // Start pulls the whole dependency tree up; startOnly is the escape hatch for
   // when the dependencies are already running in a terminal somewhere.

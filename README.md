@@ -128,6 +128,56 @@ seconds it says so and opens nothing.
 
 ---
 
+## Finding your projects
+
+Rather than writing every project into the config by hand, point Runner at the
+folders you keep code in and let it look.
+
+The magnifying glass in the sidebar scans each root and lists what it found:
+
+```text
+6 projects found
+
+☑ api               Node.js · yarn      yarn start
+☑ consumer-app      Node.js · pnpm      pnpm dev
+☑ storefront        Node.js · npm       npm run dev
+☐ mocks             Node.js · yarn      no command found
+☐ legacy-scripts    Git repository      no command found
+
+[Add selected]
+```
+
+A directory counts as a project when it has a `.git` or a `package.json`. The
+package manager comes from the lockfile — `pnpm-lock.yaml`, `yarn.lock`,
+`bun.lockb`, `package-lock.json` — which is also what decides whether the
+command is spelled `pnpm dev` or `npm run dev`.
+
+The suggested command is the first long-running script the project has: `dev`,
+then `start`, `serve`, `develop`, `watch`. A project whose scripts all exit —
+only `build` and `lint`, say — gets no suggestion and starts unticked, because
+adding it would put something in the sidebar that cannot run. It can still be
+added and given a command afterwards.
+
+Ports are deliberately **not** assigned. Runner would only be guessing, and a
+project with no port list is already handled — it simply runs without one being
+managed. Add a `port` list per project once you know what it should be.
+
+### What it does not do
+
+A directory that is itself a project is not descended into, so a monorepo is
+offered once rather than as its eight `packages/*`. `node_modules` is never
+walked. The scan goes two levels below each root, which is enough for
+`~/Projects/work/api` and shallow enough not to trawl your home directory.
+
+Projects already in the config are left out, so scanning again answers "what is
+new" rather than listing everything a second time.
+
+A linked worktree is discovered like any other directory — in a worktree
+checkout `.git` is a file rather than a directory, and both count. Runner does
+not yet group worktrees under the repository they belong to.
+
+---
+
 ## Settings
 
 Every project is configured from a form, with a **Raw JSON** tab for when that
@@ -152,9 +202,14 @@ first launch.
       "autoRestart": { "enabled": true },
       "env": { "NODE_ENV": "development" }
     }
-  ]
+  ],
+  "scanRoots": ["~/Projects", "~/Work"]
 }
 ```
+
+`scanRoots` is the list of folders the project scan walks. It is written for
+you when you add a folder in the discovery dialog, and is the only top-level
+key besides `projects`.
 
 | Field | Required | Meaning |
 | --- | --- | --- |

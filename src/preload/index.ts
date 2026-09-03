@@ -3,6 +3,7 @@ import type {
   DiscoveredProject,
   LogLine,
   LogQuery,
+  ExternalProcess,
   PortConflict,
   ProjectGit,
   ProjectConfig,
@@ -40,6 +41,9 @@ const api = {
   stopOnly: (id: string): Promise<void> => ipcRenderer.invoke('project:stopOnly', id),
   /** Stops the project, waits for its ports to come back, and starts it again. */
   restart: (id: string): Promise<void> => ipcRenderer.invoke('project:restart', id),
+
+  /** Dev servers running outside Runner, attributed to the projects they are in. */
+  getExternals: (): Promise<ExternalProcess[]> => ipcRenderer.invoke('processes:external'),
 
   /** Every project placed in its repository, with the worktree it is. */
   getProjectGit: (): Promise<ProjectGit[]> => ipcRenderer.invoke('git:projects'),
@@ -85,6 +89,11 @@ const api = {
     const listener = (_e: unknown, line: LogLine): void => handler(line)
     ipcRenderer.on('logs:line', listener)
     return () => ipcRenderer.off('logs:line', listener)
+  },
+  onExternals: (handler: (found: ExternalProcess[]) => void): (() => void) => {
+    const listener = (_e: unknown, found: ExternalProcess[]): void => handler(found)
+    ipcRenderer.on('externals:update', listener)
+    return () => ipcRenderer.off('externals:update', listener)
   },
   onRuntime: (handler: (runtime: ProjectRuntime) => void): (() => void) => {
     const listener = (_e: unknown, runtime: ProjectRuntime): void => handler(runtime)

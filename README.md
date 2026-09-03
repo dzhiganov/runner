@@ -128,6 +128,37 @@ seconds it says so and opens nothing.
 
 ---
 
+## Things you started yourself
+
+Runner used to know only what it had started. A dev server you launched by hand
+in a terminal left its project looking stopped while its port was mysteriously
+busy.
+
+```text
+api
+🟡 Running · External · :4931 · pid 94289
+```
+
+Every few seconds Runner asks the system what is listening, and attributes each
+listener to the project whose directory it is working in. Those show as
+**External**, in amber rather than green: a project answering on its port is
+good news either way, but Stop and Restart do not mean what they usually mean
+when Runner is not the one running it. Its ports are still offered as links,
+and Run still says the port is in use — pressing it offers to take the process
+down, since its directory matches a project you have configured.
+
+Ownership is decided per project, not per process id. The thing on the port is
+a grandchild of the login shell Runner spawned, so its pid was never one Runner
+recorded; what Runner does know is which projects it is currently running, and
+anything in such a project's directory is its own.
+
+Listeners that match no configured project are ignored. Reporting everything on
+the machine would make this a system monitor — the question being answered is
+"is my project already up", which is only meaningful about projects Runner
+knows. Ports below 1024 are ignored for the same reason.
+
+---
+
 ## Worktrees
 
 Each project shows the branch it is checked out on:

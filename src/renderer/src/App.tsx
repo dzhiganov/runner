@@ -1,5 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { ProjectConfig, ProjectGit, ProjectRuntime, RunnerConfig } from '@shared/types.js'
+import type {
+  ExternalProcess,
+  ProjectConfig,
+  ProjectGit,
+  ProjectRuntime,
+  RunnerConfig
+} from '@shared/types.js'
 import { buildTree, type TreeNode } from '@shared/graph.js'
 import TerminalHost from './components/TerminalHost.js'
 import ConfigEditor from './components/ConfigEditor.js'
@@ -87,6 +93,8 @@ export default function App(): React.JSX.Element {
   const [conflictFor, setConflictFor] = useState<string | null>(null)
   /** Repository and worktree per project, keyed by project id. */
   const [gitInfo, setGitInfo] = useState<Record<string, ProjectGit>>({})
+  /** Dev servers running outside Runner, keyed by the project they belong to. */
+  const [externals, setExternals] = useState<Record<string, ExternalProcess>>({})
   const [now, setNow] = useState(() => Date.now())
   const [dragId, setDragId] = useState<string | null>(null)
   const [dropId, setDropId] = useState<string | null>(null)
@@ -117,9 +125,14 @@ export default function App(): React.JSX.Element {
       setRuntimes((prev) => ({ ...prev, [runtime.id]: runtime }))
     })
     const offConfig = window.runner.onConfigChanged((next) => setConfig(next))
+    const index = (found: ExternalProcess[]): Record<string, ExternalProcess> =>
+      Object.fromEntries(found.map((p) => [p.projectId, p]))
+    const offExternals = window.runner.onExternals((found) => setExternals(index(found)))
+    window.runner.getExternals().then((found) => setExternals(index(found)))
     return () => {
       offRuntime()
       offConfig()
+      offExternals()
     }
   }, [])
 
@@ -237,6 +250,15 @@ export default function App(): React.JSX.Element {
   const metaFor = (runtime: ProjectRuntime): string => {
     if (runtime.status === 'waiting') {
       return runtime.waitingFor ? `Waiting for ${nameOf(runtime.waitingFor)}` : 'Waiting'
+    }
+    // Something is up in this project's directory that Runner did not start.
+    // Reporting it as Stopped would be the lie this whole feature exists to
+    // stop telling.
+    const external = externals[runtime.id]
+    if (external && runtime.status === 'stopped') {
+      return ['Running', 'External', portLabel(external.ports), `pid ${external.pid}`]
+        .filter(Boolean)
+        .join(' · ')
     }
     return [
       STATUS_LABEL[runtime.status],
@@ -361,6 +383,9 @@ export default function App(): React.JSX.Element {
                 />
               )}
               {runtime.status === 'running' && <span className="dot running" />}
+              {runtime.status === 'stopped' && externals[project.id] && (
+                <span className="dot external" title="Running outside Runner" />
+              )}
             </div>
             <div className="project-meta truncate">
               {branchOf(project.id) && (
@@ -483,11 +508,20 @@ export default function App(): React.JSX.Element {
                   <AlertIcon size={13} className="broken" />
                 )}
                 <span className="path truncate">{active.path}</span>
+                {activeRuntime.status === 'stopped' && externals[active.id] && (
+                  <span className="external-badge" title={externals[active.id].command}>
+                    External · pid {externals[active.id].pid}
+                    {externals[active.id].branch && <> · {externals[active.id].branch}</>}
+                  </span>
+                )}
               </div>
 
               <div className="toolbar-actions">
-                {isLive(active.id) &&
-                  portsOf(activeRuntime)
+                {(isLive(active.id) || !!externals[active.id]) &&
+                  (isLive(active.id)
+                    ? portsOf(activeRuntime)
+                    : externals[active.id].ports
+                  )
                     .slice(0, 4)
                     .map((port) => (
                       <button
@@ -596,9 +630,16 @@ export default function App(): React.JSX.Element {
             <TerminalHost activeId={activeId} />
 
             <footer className="statusbar">
-              <span>{STATUS_LABEL[activeRuntime.status]}</span>
+              <span>
+                {activeRuntime.status === 'stopped' && externals[active.id]
+                  ? 'Running outside Runner'
+                  : STATUS_LABEL[activeRuntime.status]}
+              </span>
               {portsOf(activeRuntime).length > 0 && (
                 <span>port {portsOf(activeRuntime).join(', ')}</span>
+              )}
+              {activeRuntime.status === 'stopped' && externals[active.id] && (
+                <span>port {externals[active.id].ports.join(', ')}</span>
               )}
               {activeRuntime.pid && <span>pid {activeRuntime.pid}</span>}
               {activeRuntime.restartAttempts > 0 && (

@@ -12,6 +12,7 @@ import { LogStore, levelOf } from '../src/main/log-store.js'
 import { whoHolds, groupIsSafeToKill } from '../src/main/port-owner.js'
 import { classify, killOwner, projectAt } from '../src/main/port-conflict.js'
 import { parseWorktrees, repoInfo, forgetRepos } from '../src/main/git.js'
+import { parseListeners, sweep } from '../src/main/processes.js'
 import { buildTree, dependentsOf, findCycles, startOrder } from '../src/shared/graph.js'
 import type { ProjectConfig, ProjectRuntime } from '../src/shared/types.js'
 
@@ -457,6 +458,73 @@ async function main(): Promise<void> {
   const cachedSelf = await repoInfo(process.cwd())
   check('a repeated read is served from cache with the same answer', cachedSelf?.name === self?.name)
   check('a different directory is not served the first one\'s answer', (await repoInfo('/tmp')) === null)
+
+  // --- external processes ------------------------------------------------
+  const LSOF = [
+    'p400',
+    'cnode',
+    'f10',
+    'n*:3000',
+    'f11',
+    'n127.0.0.1:3001',
+    'p401',
+    'cranger',
+    'f12',
+    'n[::1]:8080',
+    'p402',
+    'claunchd',
+    'f13',
+    'n*:22',
+    'p403',
+    'cnothing',
+    'f14'
+  ].join('\n')
+
+  const listeners = parseListeners(LSOF)
+  check('a process listening on several ports is one entry', listeners.length === 2, `${listeners.length}`)
+  check(
+    'every port of a process is collected',
+    listeners.find((l) => l.pid === 400)?.ports.size === 2
+  )
+  check(
+    'an IPv6 bracketed address parses',
+    listeners.find((l) => l.pid === 401)?.ports.has(8080) === true
+  )
+  // Port 22 is sshd, not somebody's dev server.
+  check('privileged ports are ignored', !listeners.some((l) => l.pid === 402))
+  check('a process with no listening socket is dropped', !listeners.some((l) => l.pid === 403))
+  check('empty output parses to nothing', parseListeners('').length === 0)
+
+  // Against the machine, with a real listener inside this very project — which
+  // is a configured project for the purposes of the sweep.
+  const outside = createServer(() => {})
+  await new Promise<void>((resolve) => outside.listen(4721, '127.0.0.1', resolve))
+
+  const sweepProjects: ProjectConfig[] = [
+    { id: 'self', name: 'self', path: process.cwd(), runCommand: 'x' }
+  ]
+
+  const external = await sweep(sweepProjects, () => false)
+  const mine = external.find((p) => p.pid === process.pid)
+  check('the sweep finds a listener inside a configured project', !!mine, `${external.length} found`)
+  check('the sweep reports the port', mine?.ports.includes(4721) === true, `${mine?.ports}`)
+  check('the sweep attributes it to the project', mine?.projectId === 'self')
+  check('the sweep reports a full command line', (mine?.command.length ?? 0) > 10, mine?.command)
+
+  // Runner's own processes are not external. Ownership is decided per project,
+  // because the pid on the port is a grandchild of the shell Runner spawned
+  // and was never a pid Runner recorded.
+  const runnerOwned = await sweep(sweepProjects, (id) => id === 'self')
+  check('a project Runner is running reports no external process', runnerOwned.length === 0)
+
+  // Anything outside every configured project is somebody else's business.
+  const elsewhere = await sweep(
+    [{ id: 'x', name: 'x', path: '/nowhere/at/all', runCommand: 'x' }],
+    () => false
+  )
+  check('listeners matching no project are dropped', elsewhere.length === 0, `${elsewhere.length}`)
+
+  await new Promise<void>((resolve) => outside.close(() => resolve()))
 
   // --- port ownership ----------------------------------------------------
   // A real listener, so lsof is exercised rather than mocked: the whole value

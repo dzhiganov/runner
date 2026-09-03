@@ -109,6 +109,12 @@ export default function App(): React.JSX.Element {
   const [externals, setExternals] = useState<Record<string, ExternalProcess>>({})
   const [paletteOpen, setPaletteOpen] = useState(false)
   const [resources, setResources] = useState<Record<string, ProjectResources>>({})
+  /** Sidebar name filter. Empty shows everything. */
+  const [filter, setFilter] = useState('')
+  /** Project the log view opens filtered to, when reached from a project. */
+  const [logsFor, setLogsFor] = useState<string | null>(null)
+  /** Port whose URL was just copied, for the momentary label swap. */
+  const [copied, setCopied] = useState<number | null>(null)
   const [now, setNow] = useState(() => Date.now())
   const [dragId, setDragId] = useState<string | null>(null)
   const [dropId, setDropId] = useState<string | null>(null)
@@ -215,7 +221,27 @@ export default function App(): React.JSX.Element {
     [config, activeId]
   )
   const activeRuntime = active ? runtimeFor(active.id) : null
-  const tree = useMemo(() => buildTree(config.projects), [config.projects])
+  /**
+   * Projects matching the sidebar filter.
+   *
+   * Also what the arrow keys move through, so keyboard navigation follows what
+   * is actually on screen rather than the full list behind it.
+   */
+  const visibleProjects = useMemo(() => {
+    const needle = filter.trim().toLowerCase()
+    if (!needle) return config.projects
+    return config.projects.filter(
+      (project) =>
+        project.name.toLowerCase().includes(needle) ||
+        project.path.toLowerCase().includes(needle) ||
+        (gitInfo[project.id]?.status?.branch ?? '').toLowerCase().includes(needle)
+    )
+  }, [config.projects, filter, gitInfo])
+
+  // While filtering, the tree is built from the matches alone: showing a
+  // dependency tree with most of its nodes missing is more confusing than a
+  // flat list of what matched.
+  const tree = useMemo(() => buildTree(visibleProjects), [visibleProjects])
   const nameOf = useCallback(
     (id: string): string => config.projects.find((p) => p.id === id)?.name ?? 'a dependency',
     [config.projects]
@@ -235,6 +261,19 @@ export default function App(): React.JSX.Element {
       if (event.key === 'k') {
         event.preventDefault()
         setPaletteOpen((open) => !open)
+        return
+      }
+      if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+        const order = visibleProjects.map((p) => p.id)
+        if (!order.length) return
+        event.preventDefault()
+        const at = activeId ? order.indexOf(activeId) : -1
+        const next = event.key === 'ArrowDown'
+          ? Math.min(at + 1, order.length - 1)
+          : Math.max(at - 1, 0)
+        setActiveId(order[at === -1 ? 0 : next])
+        setShowLogs(false)
+        setShowEnv(false)
         return
       }
       if (!activeId) return
@@ -545,6 +584,16 @@ export default function App(): React.JSX.Element {
           </button>
         </div>
 
+        {config.projects.length > 4 && (
+          <input
+            className="sidebar-filter"
+            type="search"
+            placeholder="Filter projects…"
+            value={filter}
+            onChange={(e) => setFilter(e.target.value)}
+          />
+        )}
+
         <div className="project-list">
           {config.projects.length > 0 && (
             <>
@@ -561,6 +610,7 @@ export default function App(): React.JSX.Element {
               <button
                 className={`logs-entry ${showLogs ? 'on' : ''}`}
                 onClick={() => {
+                  setLogsFor(null)
                   setShowLogs(true)
                   setShowEnv(false)
                 }}
@@ -596,7 +646,11 @@ export default function App(): React.JSX.Element {
             }}
           />
         ) : showLogs ? (
-          <LogView projects={config.projects} resources={Object.values(resources)} />
+          <LogView
+            projects={config.projects}
+            resources={Object.values(resources)}
+            initialProjectId={logsFor}
+          />
         ) : active && activeRuntime ? (
           <>
             <header className="toolbar">
@@ -629,14 +683,32 @@ export default function App(): React.JSX.Element {
                       <button
                         key={port}
                         className="btn ghost link"
-                        title={`Open ${urlFor(active, port)}`}
+                        title={`Open ${urlFor(active, port)} — right-click to copy`}
                         onClick={() => window.runner.openExternal(urlFor(active, port))}
+                        onContextMenu={(e) => {
+                          e.preventDefault()
+                          void navigator.clipboard.writeText(urlFor(active, port))
+                          setCopied(port)
+                          window.setTimeout(() => setCopied(null), 1200)
+                        }}
                       >
-                        :{port} <ExternalLinkIcon size={11} />
+                        {copied === port ? 'copied' : `:${port}`}{' '}
+                        <ExternalLinkIcon size={11} />
                       </button>
                     ))}
                 <button className="btn ghost" onClick={() => window.runner.openPath(active.path)}>
                   Folder
+                </button>
+                <button
+                  className="btn ghost"
+                  title={`Show only ${active.name} in the merged log`}
+                  onClick={() => {
+                    setLogsFor(active.id)
+                    setShowLogs(true)
+                    setShowEnv(false)
+                  }}
+                >
+                  Logs
                 </button>
                 <button
                   className="btn"

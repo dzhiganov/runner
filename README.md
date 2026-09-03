@@ -114,6 +114,33 @@ so a crash loop is visible rather than merely noisy.
 
 ---
 
+## Restarting on file change
+
+Set `"watch": true` on a project and saving a source file restarts it.
+
+```text
+› src/server.ts changed — restarting
+```
+
+`node_modules`, `.git`, build output (`dist`, `build`, `out`, `.next`, …) and
+dotfiles are never watched. A burst of writes — an editor save is several
+events, a build tool touching a directory is dozens — settles for 400ms and
+restarts once.
+
+Only while the project is running. Restarting a stopped project because a file
+changed would start something you deliberately stopped.
+
+### One macOS quirk worth knowing
+
+macOS sometimes coalesces nested changes and reports them as the watched
+directory itself, with no indication of what actually changed. Those events are
+dropped: acting on them would mean restarting during an `npm install`, which is
+exactly what the ignore list exists to prevent. The cost is that a file at the
+project root sharing the project directory's exact name will not trigger a
+restart.
+
+---
+
 ## Opening the browser
 
 Turn on **Open in the browser once it answers** and Runner opens the project's
@@ -458,6 +485,7 @@ key besides `projects`.
 | `env` | no | Extra environment variables for the child process. |
 | `shell` | no | Shell to run the command with. Defaults to your login shell. |
 | `cwd` | no | Working directory override. Defaults to `path`. |
+| `watch` | no | Restart when a source file changes. Defaults to off. |
 
 ### Which shell your commands run in
 
@@ -471,6 +499,14 @@ rather than yours. Picking the wrong shell gives the command a different `PATH`,
 and possibly a different `node`, than the terminal you tested it in. Whichever
 is being used is printed in the terminal header on every run.
 
+### Finding things
+
+Past a handful of projects the sidebar gains a filter box, matching on name,
+path and branch. `⌘↑` and `⌘↓` move between whatever it is currently showing.
+
+**Logs** in the toolbar opens the merged view narrowed to that project.
+Right-clicking a port link copies its URL instead of opening it.
+
 ### Shortcuts
 
 | Key | Action |
@@ -479,6 +515,7 @@ is being used is printed in the terminal header on every run.
 | `⌘.` | Stop the selected project |
 | `⌘,` | Edit configuration |
 | `⌘K` | Command palette |
+| `⌘↑` `⌘↓` | Move between projects |
 
 ### The command palette
 

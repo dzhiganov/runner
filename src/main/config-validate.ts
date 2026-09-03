@@ -282,6 +282,15 @@ export function validateConfig(
     const readiness = readReadiness(p.readiness, `${at}.readiness`, issues)
     const autoRestart = readAutoRestart(p.autoRestart, `${at}.autoRestart`, issues)
 
+    let watchFiles = false
+    if (p.watch !== undefined && p.watch !== null) {
+      if (typeof p.watch !== 'boolean') {
+        issues.push({ path: `${at}.watch`, message: '`watch` must be true or false.' })
+      } else {
+        watchFiles = p.watch
+      }
+    }
+
     let autoOpen = false
     if (p.autoOpen !== undefined && p.autoOpen !== null) {
       if (typeof p.autoOpen !== 'boolean') {
@@ -334,6 +343,7 @@ export function validateConfig(
       ...(port && port.length ? { port } : {}),
       ...(readiness ? { readiness } : {}),
       ...(autoOpen ? { autoOpen } : {}),
+      ...(watchFiles ? { watch: true } : {}),
       ...(autoRestart ? { autoRestart } : {}),
       ...(protocol ? { protocol } : {}),
       ...(env && Object.keys(env).length ? { env } : {}),

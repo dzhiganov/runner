@@ -25,6 +25,7 @@ import { forgetRepos, gitStatus, repoInfo } from './git.js'
 import { sweep } from './processes.js'
 import { Notifier } from './notify.js'
 import { sample } from './resources.js'
+import { Watcher } from './watcher.js'
 import { isPortFree, waitForPortsFree } from './ports.js'
 
 let mainWindow: BrowserWindow | null = null
@@ -32,6 +33,14 @@ let config: RunnerConfig = { projects: [] }
 const manager = new ProcessManager()
 const orchestrator = new Orchestrator(manager, () => config.projects)
 const logs = new LogStore()
+const watcher = new Watcher((projectId, path) => {
+  const project = findProject(projectId)
+  // Only while running: restarting a stopped project because a file changed
+  // would start something the user deliberately stopped.
+  if (!project || !manager.isRunning(projectId)) return
+  manager.write(projectId, `\r\n\x1b[36m› ${path} changed — restarting\x1b[0m\r\n`)
+  void manager.restart(project)
+})
 const notifier = new Notifier(
   (id) => findProject(id)?.name ?? null,
   (id) => {
@@ -155,6 +164,13 @@ manager.on('data', (projectId, chunk) => {
   logs.ingest(projectId, chunk)
 })
 manager.on('runtime', (runtime) => {
+  const project = findProject(runtime.id)
+  if (project?.watch) {
+    if (runtime.status === 'running') watcher.start(project)
+    else if (runtime.status === 'stopped' || runtime.status === 'exited' || runtime.status === 'error') {
+      watcher.stop(runtime.id)
+    }
+  }
   // A project that exits without a trailing newline still has a last line.
   if (runtime.status === 'exited' || runtime.status === 'error') logs.flush(runtime.id)
   notifier.observe(runtime)
@@ -173,6 +189,8 @@ function adopt(next: RunnerConfig): void {
   manager.prune(live)
   logs.prune(live)
   notifier.forget(live)
+  // A project may have just lost its `watch` flag, or been removed entirely.
+  for (const project of config.projects) if (!project.watch) watcher.stop(project.id)
   forgetRepos()
   repoCache.clear()
   void refreshRepos().then(refreshExternals)
@@ -502,6 +520,7 @@ app.on('before-quit', (event) => {
   if (portPoll) clearInterval(portPoll)
   if (sweepPoll) clearInterval(sweepPoll)
   if (resourcePoll) clearInterval(resourcePoll)
+  watcher.stopAll()
   manager.stopAll().finally(() => app.quit())
 })
 

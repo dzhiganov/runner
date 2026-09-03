@@ -17,6 +17,7 @@ import { score } from '../src/shared/fuzzy.js'
 import { decide } from '../src/shared/notify-rules.js'
 import { parsePs, descendants, summarise } from '../src/main/resources.js'
 import { group, LOOSE } from '../src/shared/environment.js'
+import { isInteresting, Watcher } from '../src/main/watcher.js'
 import { buildTree, dependentsOf, findCycles, startOrder } from '../src/shared/graph.js'
 import type { ProjectConfig, ProjectGit, ProjectRuntime, RepoInfo } from '../src/shared/types.js'
 
@@ -462,6 +463,90 @@ async function main(): Promise<void> {
   const cachedSelf = await repoInfo(process.cwd())
   check('a repeated read is served from cache with the same answer', cachedSelf?.name === self?.name)
   check('a different directory is not served the first one\'s answer', (await repoInfo('/tmp')) === null)
+
+  // --- file watching -----------------------------------------------------
+  check('a source file is interesting', isInteresting('src/index.ts'))
+  check('a bare filename is interesting', isInteresting('index.js'))
+
+  // node_modules is the important exclusion: enormous, and it churns during an
+  // install, which is never the source change anybody means.
+  check('node_modules is ignored', !isInteresting('node_modules/react/index.js'))
+  check('a nested node_modules is ignored', !isInteresting('packages/a/node_modules/x/i.js'))
+  check('build output is ignored', !isInteresting('dist/bundle.js') && !isInteresting('.next/x'))
+  check('the git directory is ignored', !isInteresting('.git/index'))
+
+  // Editors write dotfiles and temporary files constantly; none are the source.
+  check('a dotfile is ignored', !isInteresting('.DS_Store'))
+  check('a nested dotfile is ignored', !isInteresting('src/.eslintcache'))
+  check('an editor swap file is ignored', !isInteresting('src/index.ts.swp'))
+  check('a log file is ignored', !isInteresting('debug.log'))
+  check('an empty path is ignored', !isInteresting(''))
+
+  // macOS coalesces nested changes and reports them as the watched directory
+  // itself. That carries no information about what changed, and acting on it
+  // means restarting for node_modules churn — it slips past every other rule
+  // because a directory name looks like an ordinary path.
+  check('the watched directory reported as itself is ignored', !isInteresting('my-app', 'my-app'))
+  check('a file merely sharing a prefix is still interesting', isInteresting('my-app.ts', 'my-app'))
+  check('a root name is not required', isInteresting('src/index.ts'))
+
+  // A dot inside a filename is not a dotfile.
+  check('a file with a dot in its name is interesting', isInteresting('src/app.config.ts'))
+
+  const watchCfg = validateConfig({
+    projects: [{ name: 'a', path: '~/x', runCommand: 'c', watch: true }]
+  })
+  check('watch survives validation', watchCfg.ok && watchCfg.config.projects[0].watch === true)
+  const watchOff = validateConfig({
+    projects: [{ name: 'a', path: '~/x', runCommand: 'c', watch: false }]
+  })
+  check('watch off is omitted rather than stored', watchOff.ok && !('watch' in watchOff.config.projects[0]))
+  const watchBad = validateConfig({
+    projects: [{ name: 'a', path: '~/x', runCommand: 'c', watch: 'yes' }]
+  })
+  check('a non-boolean watch is rejected', !watchBad.ok)
+
+  // The class itself, against a real directory — the filter above says which
+  // paths are interesting, not that a change ever reaches it.
+  const WATCH_DIR = join(tmpdir(), `runner-watch-${process.pid}`)
+  rmSync(WATCH_DIR, { recursive: true, force: true })
+  mkdirSync(join(WATCH_DIR, 'node_modules', 'junk'), { recursive: true })
+
+  const fired: string[] = []
+  const w = new Watcher((_id, path) => fired.push(path))
+  w.start({ id: 'w', name: 'w', path: WATCH_DIR, runCommand: 'x', watch: true })
+  await new Promise((r) => setTimeout(r, 300))
+
+  writeFileSync(join(WATCH_DIR, 'node_modules', 'junk', 'x.js'), 'noise')
+  await new Promise((r) => setTimeout(r, 900))
+  check('a change in node_modules does not fire', fired.length === 0, fired.join())
+
+  writeFileSync(join(WATCH_DIR, 'src.js'), 'real')
+  await new Promise((r) => setTimeout(r, 900))
+  check('a source change fires', fired.length === 1, `fired ${fired.length}: ${fired.join()}`)
+
+  // Several writes in quick succession are one save, not four restarts.
+  fired.length = 0
+  for (let i = 0; i < 4; i += 1) writeFileSync(join(WATCH_DIR, `burst${i}.js`), 'x')
+  await new Promise((r) => setTimeout(r, 900))
+  check('a burst of writes debounces to one restart', fired.length === 1, `${fired.length}`)
+
+  // Regression: start() is called from the runtime event, which fires every
+  // few seconds. If it tore the watcher down each time it would clear the
+  // pending debounce, and a change would only ever fire when no runtime update
+  // landed within the debounce window.
+  fired.length = 0
+  writeFileSync(join(WATCH_DIR, 'racing.js'), 'x')
+  w.start({ id: 'w', name: 'w', path: WATCH_DIR, runCommand: 'x', watch: true })
+  await new Promise((r) => setTimeout(r, 900))
+  check('a redundant start does not cancel a pending restart', fired.length === 1, `${fired.length}`)
+
+  w.stopAll()
+  fired.length = 0
+  writeFileSync(join(WATCH_DIR, 'after-stop.js'), 'x')
+  await new Promise((r) => setTimeout(r, 900))
+  check('nothing fires after the watcher is stopped', fired.length === 0)
+  rmSync(WATCH_DIR, { recursive: true, force: true })
 
   // --- environment grouping ----------------------------------------------
   const envProjects: ProjectConfig[] = [

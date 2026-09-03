@@ -144,6 +144,42 @@ export interface ProjectRuntime {
   restartAttempts: number
 }
 
+/** One working copy of a repository — the main one, or a linked worktree. */
+export interface Worktree {
+  /** Absolute path to the working copy. */
+  path: string
+  /** Commit currently checked out, or null when it could not be read. */
+  head: string | null
+  /** Short branch name, or null when the head is detached. */
+  branch: string | null
+  detached: boolean
+  locked: boolean
+}
+
+/** A repository, and every working copy of it on this machine. */
+export interface RepoInfo {
+  /** Path of the main working copy. */
+  root: string
+  /**
+   * The shared git directory. This is the repository's identity: two checkouts
+   * of one repository have different paths but the same common directory.
+   */
+  commonDir: string
+  /** The repository's name, taken from its main working copy's directory. */
+  name: string
+  /** Main worktree first, as git lists them. */
+  worktrees: Worktree[]
+}
+
+/** A configured project placed in its repository, for the grouped sidebar. */
+export interface ProjectGit {
+  projectId: string
+  /** Null when the project is not in a git repository at all. */
+  repo: RepoInfo | null
+  /** The worktree this project's directory is, when it is one. */
+  worktree: Worktree | null
+}
+
 /** A process found holding a port, as far as the OS would say. */
 export interface PortOwner {
   pid: number

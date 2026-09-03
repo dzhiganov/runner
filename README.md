@@ -128,6 +128,34 @@ seconds it says so and opens nothing.
 
 ---
 
+## Worktrees
+
+Each project shows the branch it is checked out on:
+
+```text
+consumer-app
+🌿 main            Stopped
+
+consumer-gc
+🌿 feat/GC-123     Stopped
+```
+
+Two checkouts of one repository are recognised as the same repository, not as
+unrelated projects. Identity is the shared git directory rather than the path —
+which is what a worktree actually has in common with its main checkout. Hovering
+the branch names the repository and how many worktrees it has.
+
+A detached checkout shows its commit instead of a branch. Bare repositories are
+ignored: there is no working copy to run anything in.
+
+Git is read on a slow cycle and cached, refreshing when the window regains
+focus. Shelling out to `git` is far more expensive than anything else the
+sidebar does, and a branch changes on a human timescale.
+
+Runner reads worktree state; it does not create, move or remove worktrees.
+
+---
+
 ## When a port is taken
 
 If every port a project is allowed to use is occupied, Run becomes **Port in
@@ -214,9 +242,12 @@ walked. The scan goes two levels below each root, which is enough for
 Projects already in the config are left out, so scanning again answers "what is
 new" rather than listing everything a second time.
 
-A linked worktree is discovered like any other directory — in a worktree
-checkout `.git` is a file rather than a directory, and both count. Runner does
-not yet group worktrees under the repository they belong to.
+Worktrees of a repository you have already added are offered too, wherever on
+disk they live and whether or not a scan root covers them. Having added one
+checkout, its siblings are the likeliest thing you want next. They are named
+after their directory rather than their `package.json`, because every checkout
+of a repository shares one package name and the directory is what tells them
+apart.
 
 ---
 

@@ -1289,3 +1289,31 @@ input.narrow {
   font-size: 12px;
   text-align: right;
 }
+
+/* --- git branch ----------------------------------------------------------- */
+
+.branch {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  max-width: 130px;
+  margin-right: 6px;
+  padding: 1px 5px 1px 4px;
+  border-radius: 4px;
+  background: #22262e;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: -1px;
+}
+
+.branch .icon {
+  flex: none;
+  opacity: 0.8;
+}
+
+.project.on .branch {
+  background: #313746;
+  color: var(--text);
+}

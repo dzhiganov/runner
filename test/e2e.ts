@@ -11,6 +11,7 @@ import { fallbackCommand, inspect, scan, tildify } from '../src/main/discovery.j
 import { LogStore, levelOf } from '../src/main/log-store.js'
 import { whoHolds, groupIsSafeToKill } from '../src/main/port-owner.js'
 import { classify, killOwner, projectAt } from '../src/main/port-conflict.js'
+import { parseWorktrees, repoInfo, forgetRepos } from '../src/main/git.js'
 import { buildTree, dependentsOf, findCycles, startOrder } from '../src/shared/graph.js'
 import type { ProjectConfig, ProjectRuntime } from '../src/shared/types.js'
 
@@ -393,6 +394,69 @@ async function main(): Promise<void> {
     big.size() <= 20_000 && kept[kept.length - 1].text === 'line 24999',
     `held ${big.size()}`
   )
+
+  // --- worktrees ---------------------------------------------------------
+  const PORCELAIN = [
+    'worktree /repos/app',
+    'HEAD 4d759327784a1b07d5c34da4f4eb0ad8c89c9532',
+    'branch refs/heads/main',
+    '',
+    'worktree /repos/app-detached',
+    'HEAD 4d759327784a1b07d5c34da4f4eb0ad8c89c9532',
+    'detached',
+    '',
+    'worktree /repos/app-feat',
+    'HEAD 4d759327784a1b07d5c34da4f4eb0ad8c89c9532',
+    'branch refs/heads/feat/GC-123',
+    'locked',
+    ''
+  ].join('\n')
+
+  const parsed = parseWorktrees(PORCELAIN)
+  check('every worktree record is parsed', parsed.length === 3, `${parsed.length}`)
+  check('the main worktree comes first, as git lists it', parsed[0].path === '/repos/app')
+  check('refs/heads/ is stripped from the branch', parsed[0].branch === 'main')
+  check(
+    'a branch containing a slash survives stripping',
+    parsed[2].branch === 'feat/GC-123',
+    `${parsed[2].branch}`
+  )
+  check('a detached worktree has no branch', parsed[1].branch === null && parsed[1].detached)
+  check('a locked worktree is flagged', parsed[2].locked && !parsed[0].locked)
+  check('the head commit is captured', parsed[0].head?.startsWith('4d7593') === true)
+
+  // A bare repository has no working copy to run anything in.
+  check(
+    'a bare repository is not offered as a worktree',
+    parseWorktrees('worktree /repos/bare\nHEAD abc\nbare\n').length === 0
+  )
+  check('empty output parses to nothing', parseWorktrees('').length === 0)
+  check(
+    'a trailing record with no blank line after it is still parsed',
+    parseWorktrees('worktree /repos/x\nHEAD abc\nbranch refs/heads/y').length === 1
+  )
+
+  // Against a real repository — this one, which is always a git checkout when
+  // the suite runs from the repo root.
+  forgetRepos()
+  const self = await repoInfo(process.cwd())
+  check('repoInfo finds the repository it is run in', self !== null)
+  check(
+    'the repository is identified by its common git directory',
+    self?.commonDir.endsWith('/.git') === true,
+    `${self?.commonDir}`
+  )
+  check('the repository is named after its main working copy', self?.name === 'runner', `${self?.name}`)
+  check(
+    'the current directory is among the repository worktrees',
+    self?.worktrees.some((w) => w.path === process.cwd()) === true
+  )
+  check('repoInfo returns null outside a repository', (await repoInfo('/tmp')) === null)
+
+  // The cache must not leak between repositories: two directories, two answers.
+  const cachedSelf = await repoInfo(process.cwd())
+  check('a repeated read is served from cache with the same answer', cachedSelf?.name === self?.name)
+  check('a different directory is not served the first one\'s answer', (await repoInfo('/tmp')) === null)
 
   // --- port ownership ----------------------------------------------------
   // A real listener, so lsof is exercised rather than mocked: the whole value

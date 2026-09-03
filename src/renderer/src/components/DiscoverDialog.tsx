@@ -25,14 +25,21 @@ export default function DiscoverDialog({ onClose, onAdded }: Props): React.JSX.E
   const [issues, setIssues] = useState<ConfigValidationIssue[]>([])
 
   const runScan = useCallback(async (which: string[]): Promise<void> => {
-    if (!which.length) {
-      setFound([])
-      return
-    }
     setScanning(true)
     setIssues([])
     try {
-      const results = await window.runner.scanProjects(which)
+      // Worktrees of repositories already configured are offered alongside the
+      // folder scan, and without needing a root that covers them: having added
+      // one checkout of a repo, its other checkouts are the likeliest next
+      // thing you want, wherever on disk they happen to live.
+      const [scanned, worktrees] = await Promise.all([
+        which.length ? window.runner.scanProjects(which) : Promise.resolve([]),
+        window.runner.getUnconfiguredWorktrees()
+      ])
+      const paths = new Set(scanned.map((p) => p.path))
+      const results = [...scanned, ...worktrees.filter((w) => !paths.has(w.path))].sort((a, b) =>
+        a.name.localeCompare(b.name)
+      )
       setFound(results)
       // Anything with a command Runner can suggest is ticked by default; the
       // rest need a decision, so they start unticked rather than importing a

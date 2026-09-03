@@ -3,6 +3,7 @@ import type {
   DiscoveredProject,
   LogLine,
   LogQuery,
+  PortConflict,
   ProjectConfig,
   ProjectRuntime,
   RunnerConfig,
@@ -38,6 +39,12 @@ const api = {
   stopOnly: (id: string): Promise<void> => ipcRenderer.invoke('project:stopOnly', id),
   /** Stops the project, waits for its ports to come back, and starts it again. */
   restart: (id: string): Promise<void> => ipcRenderer.invoke('project:restart', id),
+
+  /** Who holds each of a project's busy ports. Empty when it can start. */
+  inspectPorts: (id: string): Promise<PortConflict[]> => ipcRenderer.invoke('ports:inspect', id),
+  /** Frees the port and starts the project. Refuses the unknown tier. */
+  resolvePortConflict: (conflict: PortConflict): Promise<{ ok: boolean; message?: string }> =>
+    ipcRenderer.invoke('ports:resolve', conflict),
 
   /** Merged, filtered lines from every project. Oldest first. */
   queryLogs: (query: LogQuery): Promise<LogLine[]> => ipcRenderer.invoke('logs:query', query),

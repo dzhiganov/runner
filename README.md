@@ -128,6 +128,48 @@ seconds it says so and opens nothing.
 
 ---
 
+## When a port is taken
+
+If every port a project is allowed to use is occupied, Run becomes **Port in
+use**. Pressing it says who is holding them:
+
+```text
+Port 3000 is already in use
+
+:3000            squatter
+🟡 Another       node run.js
+   project       PID 48192 · ~/projects/old-api      [Kill & Start]
+```
+
+What is offered depends on what the process turns out to be:
+
+| | | |
+| --- | --- | --- |
+| 🟢 | **Started by Runner** | Stop & Start — stopped through the orchestrator, so its dependency tree and auto-restart budget are handled the way a deliberate stop always is |
+| 🟡 | **Another project** | Kill & Start — not Runner's process, but its working directory matches a project you have configured |
+| 🔴 | **Unknown process** | No kill offered |
+
+A process Runner cannot identify is one it will not kill. That covers anything
+whose directory matches nothing you have configured, and anything belonging to
+another user, where the system will not say what it is.
+
+Freeing a port waits for the process to actually exit and then for the port to
+come back before starting anything — a listening socket outlives its process
+briefly, which is the same reason Restart waits.
+
+### What gets signalled
+
+The process on the port, with `SIGTERM` escalating to `SIGKILL` after four
+seconds. Its process **group** is only signalled when that process leads the
+group itself. A group it merely belongs to is somebody else's — an interactive
+shell's job, a parent script — and taking that down because a port was busy
+would be far worse than leaving an `npm` wrapper behind after its child dies.
+
+This only applies when *every* listed port is taken. When the first is busy and
+a later one is free, Runner still just uses the free one and says so.
+
+---
+
 ## Finding your projects
 
 Rather than writing every project into the config by hand, point Runner at the

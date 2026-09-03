@@ -144,6 +144,44 @@ export interface ProjectRuntime {
   restartAttempts: number
 }
 
+/** A process found holding a port, as far as the OS would say. */
+export interface PortOwner {
+  pid: number
+  /** Full command line where `ps` would give one, else lsof's short name. */
+  command: string
+  /** Working directory, or null when it could not be read. */
+  cwd: string | null
+  /** Process group id, or null when it could not be read. */
+  pgid: number | null
+}
+
+/**
+ * How much Runner knows about whoever holds a contested port, which decides
+ * what the conflict dialog is allowed to offer.
+ */
+export type PortConflictTier =
+  /** Runner started it and knows which project it is. */
+  | 'runner'
+  /** Not Runner's, but its directory matches a configured project. */
+  | 'known'
+  /** Nothing is known about it. No kill is offered. */
+  | 'unknown'
+
+/** Everything the UI needs to explain, and resolve, one port conflict. */
+export interface PortConflict {
+  /** The project that wanted to start. */
+  projectId: string
+  port: number
+  tier: PortConflictTier
+  owner: PortOwner | null
+  /** Name of the project this process belongs to, for the 🟢 and 🟡 tiers. */
+  ownerProjectName: string | null
+  /** Id of the Runner-owned project holding it, so it can be stopped properly. */
+  ownerProjectId: string | null
+  /** Other ports in the project's list that are free, offered as an alternative. */
+  alternatives: number[]
+}
+
 /** How a log line is classified, for the errors/warnings filter. */
 export type LogLevel = 'info' | 'warn' | 'error'
 

@@ -5,6 +5,7 @@ import TerminalHost from './components/TerminalHost.js'
 import ConfigEditor from './components/ConfigEditor.js'
 import DiscoverDialog from './components/DiscoverDialog.js'
 import LogView from './components/LogView.js'
+import PortConflictDialog from './components/PortConflictDialog.js'
 import {
   AlertIcon,
   BoxIcon,
@@ -81,6 +82,8 @@ export default function App(): React.JSX.Element {
   const [discovering, setDiscovering] = useState(false)
   /** The merged log view replaces the project pane while it is open. */
   const [showLogs, setShowLogs] = useState(false)
+  /** Project whose port conflict is being resolved, if any. */
+  const [conflictFor, setConflictFor] = useState<string | null>(null)
   const [now, setNow] = useState(() => Date.now())
   const [dragId, setDragId] = useState<string | null>(null)
   const [dropId, setDropId] = useState<string | null>(null)
@@ -480,18 +483,24 @@ export default function App(): React.JSX.Element {
                       </button>
                     )}
                     <button
-                      className="btn primary"
-                      disabled={activeRuntime.portsBusy}
+                      className={`btn ${activeRuntime.portsBusy ? 'danger' : 'primary'}`}
                       title={
                         activeRuntime.portsBusy
-                          ? busyTitle(active)
+                          ? `${busyTitle(active)} — see what is holding them`
                           : dependencyNames.length
                             ? `Run, starting ${dependencyNames.map((d) => d.name).join(', ')} first`
                             : 'Run'
                       }
-                      onClick={() => window.runner.start(active.id)}
+                      // A disabled button is a dead end: it says the ports are
+                      // taken but not by what, leaving the terminal as the only
+                      // way to find out. Busy turns Run into the way in.
+                      onClick={() =>
+                        activeRuntime.portsBusy
+                          ? setConflictFor(active.id)
+                          : window.runner.start(active.id)
+                      }
                     >
-                      Run
+                      {activeRuntime.portsBusy ? 'Port in use' : 'Run'}
                     </button>
                   </>
                 )}
@@ -557,6 +566,17 @@ export default function App(): React.JSX.Element {
           </div>
         )}
       </main>
+
+      {conflictFor && (
+        <PortConflictDialog
+          project={config.projects.find((p) => p.id === conflictFor) ?? config.projects[0]}
+          onClose={() => setConflictFor(null)}
+          onEditPorts={() => {
+            setEditing({ open: true, id: conflictFor })
+            setConflictFor(null)
+          }}
+        />
+      )}
 
       {discovering && (
         <DiscoverDialog

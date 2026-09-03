@@ -1,10 +1,12 @@
 import { createServer } from 'node:net'
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { userInfo } from 'node:os'
+import { tmpdir, userInfo } from 'node:os'
 import { ProcessManager, defaultShell } from '../src/main/process-manager.js'
 import { Orchestrator } from '../src/main/orchestrator.js'
 import { resolvePort, isPortFree, waitForPort, waitForPortsFree } from '../src/main/ports.js'
 import { migrate, validateConfig } from '../src/main/config-validate.js'
+import { fallbackCommand, inspect, scan, tildify } from '../src/main/discovery.js'
 import { buildTree, dependentsOf, findCycles, startOrder } from '../src/shared/graph.js'
 import type { ProjectConfig, ProjectRuntime } from '../src/shared/types.js'
 
@@ -51,6 +53,186 @@ async function main(): Promise<void> {
     ]
   })
   check('validation rejects duplicate names', !dupes.ok)
+
+  // --- project discovery -------------------------------------------------
+  // The tree is built here rather than committed: a fixture containing `.git`
+  // directories would be an embedded repository in Runner's own checkout.
+  const ROOT = join(tmpdir(), `runner-discovery-${process.pid}`)
+  const make = (relative: string, files: Record<string, string> = {}, dirs: string[] = []): void => {
+    const dir = join(ROOT, relative)
+    mkdirSync(dir, { recursive: true })
+    for (const name of dirs) mkdirSync(join(dir, name), { recursive: true })
+    for (const [name, body] of Object.entries(files)) writeFileSync(join(dir, name), body)
+  }
+
+  rmSync(ROOT, { recursive: true, force: true })
+  make('plain-npm', {
+    'package.json': '{"name":"storefront","scripts":{"build":"tsc","dev":"vite","test":"t"}}',
+    'package-lock.json': '{}'
+  }, ['.git'])
+  make('plain-npm/node_modules/evil', {
+    'package.json': '{"name":"evil","scripts":{"dev":"x"}}'
+  })
+  make('pnpm-app', {
+    'package.json': '{"name":"my-api","scripts":{"start":"node .","test":"jest"}}',
+    'pnpm-lock.yaml': 'lockfileVersion: 6'
+  })
+  make('yarn-app', {
+    'package.json': '{"name":"toolbox","scripts":{"build":"tsc","lint":"eslint ."}}',
+    'yarn.lock': '# yarn'
+  })
+  make('bun-app', {
+    'package.json': '{"name":"bun-thing","scripts":{"dev":"bun run index.ts"}}',
+    'bun.lockb': 'x'
+  })
+  // A linked worktree: `.git` is a file, not a directory.
+  make('worktree-checkout', {
+    '.git': 'gitdir: /somewhere/.git/worktrees/feat\n',
+    'package.json': '{"name":"feature-branch","scripts":{"dev":"vite"}}',
+    'package-lock.json': '{}'
+  })
+  make('git-only', {}, ['.git'])
+  make('nested/deep-app', {
+    'package.json': '{"name":"deep","scripts":{"dev":"vite"}}',
+    'package-lock.json': '{}'
+  })
+  make('not-a-project', { 'readme.txt': 'notes' })
+  make('monorepo', {
+    'package.json': '{"name":"monorepo","scripts":{"dev":"turbo dev"}}',
+    'pnpm-lock.yaml': 'lockfileVersion: 6'
+  }, ['.git'])
+  make('monorepo/packages/a', { 'package.json': '{"name":"pkg-a"}' })
+  make('monorepo/packages/b', { 'package.json': '{"name":"pkg-b"}' })
+  make('broken-json', { 'package.json': '{ this is not json' }, ['.git'])
+
+  const found = scan([ROOT])
+  const byName = (name: string): (typeof found)[number] | undefined =>
+    found.find((p) => p.name === name)
+
+  check(
+    'scan finds every project directory under the root',
+    found.length === 9,
+    `found ${found.length}: ${found.map((p) => p.name).join(', ')}`
+  )
+  check('scan skips a directory that is neither git nor node', !byName('not-a-project'))
+
+  // Regression: `.git` is a FILE in a linked worktree. Testing isDirectory()
+  // here would silently skip every worktree checkout on the machine.
+  check('scan detects a worktree checkout, where .git is a file', !!byName('feature-branch'))
+
+  check('scan descends two levels', !!byName('deep'))
+  check(
+    'scan does not walk into node_modules',
+    !byName('evil'),
+    'a dependency must never be offered as a project'
+  )
+  check(
+    'scan stops at a project boundary rather than listing its packages',
+    !!byName('monorepo') && !byName('pkg-a') && !byName('pkg-b')
+  )
+  check(
+    'scan uses the directory name when package.json will not parse',
+    byName('broken-json')?.hasPackageJson === true
+  )
+  check('scan prefers the package.json name over the folder name', !!byName('storefront'))
+
+  check('lockfile identifies pnpm', byName('my-api')?.packageManager === 'pnpm')
+  check('lockfile identifies yarn', byName('toolbox')?.packageManager === 'yarn')
+  check('lockfile identifies bun', byName('bun-thing')?.packageManager === 'bun')
+  check('lockfile identifies npm', byName('storefront')?.packageManager === 'npm')
+  // A package.json with no lockfile at all: nothing to prefix a script with,
+  // so no commands are offered rather than guessing npm and being wrong.
+  // Built outside ROOT so it does not shift the scan counts asserted above.
+  const LOCKLESS = join(tmpdir(), `runner-lockless-${process.pid}`)
+  mkdirSync(LOCKLESS, { recursive: true })
+  writeFileSync(
+    join(LOCKLESS, 'package.json'),
+    '{"name":"lockless","scripts":{"dev":"vite"}}'
+  )
+  const lockless = inspect(LOCKLESS)
+  rmSync(LOCKLESS, { recursive: true, force: true })
+  check(
+    'a project with no lockfile offers no package manager and no commands',
+    lockless?.packageManager === null &&
+      lockless?.commands.length === 0 &&
+      lockless?.suggestedCommand === null
+  )
+
+  check(
+    'npm scripts are spelled with `run`, other managers without it',
+    byName('storefront')?.suggestedCommand === 'npm run dev' &&
+      byName('bun-thing')?.suggestedCommand === 'bun dev'
+  )
+  check(
+    'a project with `start` but no `dev` suggests start',
+    byName('my-api')?.suggestedCommand === 'pnpm start'
+  )
+  check(
+    'a project whose scripts all exit suggests nothing',
+    byName('toolbox')?.suggestedCommand === null,
+    `got ${byName('toolbox')?.suggestedCommand}`
+  )
+  check(
+    'a git repo with no package.json suggests nothing and lists no commands',
+    byName('git-only')?.suggestedCommand === null && byName('git-only')?.commands.length === 0
+  )
+  check(
+    'every script is listed even when it is not the suggestion',
+    byName('storefront')?.commands.sort().join(',') === 'npm run build,npm run dev,npm run test'
+  )
+
+  // Validation requires a runCommand, so a project with nothing to suggest
+  // still needs one to be addable at all.
+  check('fallback command follows the detected manager', fallbackCommand('pnpm') === 'pnpm dev')
+  check('fallback command assumes npm when nothing was detected', fallbackCommand(null) === 'npm run dev')
+
+  const already = scan([ROOT], [join(ROOT, 'plain-npm'), join(ROOT, 'monorepo')])
+  check(
+    'a re-scan omits projects already in the config',
+    already.length === found.length - 2 && !already.some((p) => p.name === 'storefront')
+  )
+
+  check('scan ignores a root that does not exist', scan([join(ROOT, 'nope')]).length === 0)
+  check('scan ignores a root that is a file', scan([join(ROOT, 'not-a-project/readme.txt')]).length === 0)
+  check(
+    'the same project under two overlapping roots is listed once',
+    scan([ROOT, join(ROOT, 'plain-npm')]).filter((p) => p.name === 'storefront').length === 1
+  )
+
+  check('inspect returns null for a directory that is not a project', inspect(join(ROOT, 'not-a-project')) === null)
+  check(
+    'a discovered project carries both an absolute path and a display path',
+    byName('storefront')?.path === join(ROOT, 'plain-npm') &&
+      byName('storefront')?.displayPath === tildify(join(ROOT, 'plain-npm'))
+  )
+
+  const home = process.env.HOME ?? ''
+  check(
+    'paths are written back in ~ form so the config stays portable',
+    tildify(join(home, 'Projects/api')) === '~/Projects/api' && tildify('/opt/x') === '/opt/x'
+  )
+  check(
+    'tildify does not mangle a sibling of the home directory',
+    tildify(`${home}-backup/api`) === `${home}-backup/api`
+  )
+
+  // A discovered project must survive the validator it will be handed to.
+  const discovered = validateConfig({
+    projects: [
+      { name: byName('storefront')!.name, path: tildify(byName('storefront')!.path), runCommand: byName('storefront')!.suggestedCommand }
+    ]
+  })
+  check('a discovered project passes config validation', discovered.ok)
+
+  const withRoots = validateConfig({ projects: [], scanRoots: ['~/Projects', '~/Projects', ' ~/Work '] })
+  check(
+    'scanRoots are preserved, trimmed and deduped',
+    withRoots.ok && withRoots.config.scanRoots?.join(',') === '~/Projects,~/Work'
+  )
+  const badRoots = validateConfig({ projects: [], scanRoots: 'nope' })
+  check('scanRoots must be an array', !badRoots.ok)
+
+  rmSync(ROOT, { recursive: true, force: true })
 
   // --- shell selection ---------------------------------------------------
   // Regression: an inherited SHELL (from `open`, a launcher, a parent script)

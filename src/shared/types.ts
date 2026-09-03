@@ -66,6 +66,39 @@ export interface ProjectConfig {
 
 export interface RunnerConfig {
   projects: ProjectConfig[]
+  /**
+   * Folders scanned for projects, `~`-prefixed or absolute. Empty or absent
+   * means discovery has not been set up; the UI offers likely roots instead.
+   */
+  scanRoots?: string[]
+}
+
+/** Package manager inferred from a project's lockfile. */
+export type PackageManager = 'npm' | 'yarn' | 'pnpm' | 'bun'
+
+/**
+ * A project directory found by a scan, before the user has decided whether to
+ * add it. Not persisted — it is regenerated on every scan.
+ */
+export interface DiscoveredProject {
+  /** From `package.json` `name`, falling back to the directory name. */
+  name: string
+  /** Absolute path, as found on disk. Identity — compared against config paths. */
+  path: string
+  /** The same path in `~` form, for display. Identity still lives in `path`. */
+  displayPath: string
+  hasGit: boolean
+  hasPackageJson: boolean
+  /** Null when no lockfile identified one. */
+  packageManager: PackageManager | null
+  /** Every script in `package.json`, spelled for this package manager. */
+  commands: string[]
+  /**
+   * The command Runner would use if added: the first long-running script it
+   * recognises. Null when there is nothing sensible to suggest, in which case
+   * the user has to supply one.
+   */
+  suggestedCommand: string | null
 }
 
 export type ProjectStatus =

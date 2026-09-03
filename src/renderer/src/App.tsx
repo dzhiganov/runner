@@ -14,6 +14,7 @@ import DiscoverDialog from './components/DiscoverDialog.js'
 import LogView from './components/LogView.js'
 import PortConflictDialog from './components/PortConflictDialog.js'
 import CommandPalette, { buildCommands } from './components/CommandPalette.js'
+import EnvironmentView from './components/EnvironmentView.js'
 import {
   AlertIcon,
   BoxIcon,
@@ -22,6 +23,7 @@ import {
   LayersIcon,
   PlayIcon,
   BranchIcon,
+  LayoutIcon,
   ListIcon,
   SearchIcon,
   SpinnerIcon,
@@ -98,6 +100,7 @@ export default function App(): React.JSX.Element {
   const [discovering, setDiscovering] = useState(false)
   /** The merged log view replaces the project pane while it is open. */
   const [showLogs, setShowLogs] = useState(false)
+  const [showEnv, setShowEnv] = useState(false)
   /** Project whose port conflict is being resolved, if any. */
   const [conflictFor, setConflictFor] = useState<string | null>(null)
   /** Repository and worktree per project, keyed by project id. */
@@ -146,6 +149,7 @@ export default function App(): React.JSX.Element {
     const offFocus = window.runner.onFocusProject((id) => {
       setActiveId(id)
       setShowLogs(false)
+      setShowEnv(false)
     })
     window.runner.getExternals().then((found) => setExternals(index(found)))
     return () => {
@@ -373,7 +377,7 @@ export default function App(): React.JSX.Element {
         <div
           className={[
             'project',
-            project.id === activeId && !showLogs ? 'on' : '',
+            project.id === activeId && !showLogs && !showEnv ? 'on' : '',
             dragId === project.id ? 'dragging' : '',
             dropId === project.id && dragId !== project.id ? 'drop-target' : ''
           ]
@@ -382,6 +386,7 @@ export default function App(): React.JSX.Element {
           onClick={() => {
             setActiveId(project.id)
             setShowLogs(false)
+            setShowEnv(false)
           }}
           // Reordering only makes sense between siblings at the root: a child's
           // position is dictated by the dependency that owns it.
@@ -542,13 +547,28 @@ export default function App(): React.JSX.Element {
 
         <div className="project-list">
           {config.projects.length > 0 && (
-            <button
-              className={`logs-entry ${showLogs ? 'on' : ''}`}
-              onClick={() => setShowLogs(true)}
-            >
-              <ListIcon size={13} />
-              All logs
-            </button>
+            <>
+              <button
+                className={`logs-entry ${showEnv ? 'on' : ''}`}
+                onClick={() => {
+                  setShowEnv(true)
+                  setShowLogs(false)
+                }}
+              >
+                <LayoutIcon size={13} />
+                Environment
+              </button>
+              <button
+                className={`logs-entry ${showLogs ? 'on' : ''}`}
+                onClick={() => {
+                  setShowLogs(true)
+                  setShowEnv(false)
+                }}
+              >
+                <ListIcon size={13} />
+                All logs
+              </button>
+            </>
           )}
 
           {tree.map((node) => renderNode(node, true))}
@@ -562,7 +582,20 @@ export default function App(): React.JSX.Element {
       </aside>
 
       <main className="main">
-        {showLogs ? (
+        {showEnv ? (
+          <EnvironmentView
+            projects={config.projects}
+            git={gitInfo}
+            runtimeFor={runtimeFor}
+            isLive={isLive}
+            externals={externals}
+            resources={resources}
+            onSelect={(id) => {
+              setActiveId(id)
+              setShowEnv(false)
+            }}
+          />
+        ) : showLogs ? (
           <LogView projects={config.projects} resources={Object.values(resources)} />
         ) : active && activeRuntime ? (
           <>
@@ -685,6 +718,7 @@ export default function App(): React.JSX.Element {
                       onClick={() => {
                         setActiveId(dep.id)
                         setShowLogs(false)
+                        setShowEnv(false)
                       }}
                     >
                       {BUSY.includes(depRuntime.status) && <SpinnerIcon size={9} />}
@@ -746,8 +780,16 @@ export default function App(): React.JSX.Element {
             select: (id) => {
               setActiveId(id)
               setShowLogs(false)
+              setShowEnv(false)
             },
-            openLogs: () => setShowLogs(true),
+            openLogs: () => {
+              setShowLogs(true)
+              setShowEnv(false)
+            },
+            openEnvironment: () => {
+              setShowEnv(true)
+              setShowLogs(false)
+            },
             openDiscovery: () => setDiscovering(true),
             openEditor: (id) => setEditing({ open: true, id: id ?? activeId }),
             openConflict: (id) => setConflictFor(id)

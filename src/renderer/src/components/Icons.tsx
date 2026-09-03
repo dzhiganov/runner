@@ -161,3 +161,13 @@ export function BranchIcon(props: IconProps): React.JSX.Element {
     </Svg>
   )
 }
+
+/** The environment view: repositories and the services inside them. */
+export function LayoutIcon(props: IconProps): React.JSX.Element {
+  return (
+    <Svg {...props}>
+      <rect x="3" y="3" width="18" height="18" rx="2" />
+      <path d="M3 9h18M9 21V9" />
+    </Svg>
+  )
+}

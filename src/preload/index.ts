@@ -4,6 +4,7 @@ import type {
   LogLine,
   LogQuery,
   PortConflict,
+  ProjectGit,
   ProjectConfig,
   ProjectRuntime,
   RunnerConfig,
@@ -39,6 +40,14 @@ const api = {
   stopOnly: (id: string): Promise<void> => ipcRenderer.invoke('project:stopOnly', id),
   /** Stops the project, waits for its ports to come back, and starts it again. */
   restart: (id: string): Promise<void> => ipcRenderer.invoke('project:restart', id),
+
+  /** Every project placed in its repository, with the worktree it is. */
+  getProjectGit: (): Promise<ProjectGit[]> => ipcRenderer.invoke('git:projects'),
+  /** Worktrees of configured repositories that are not themselves projects. */
+  getUnconfiguredWorktrees: (): Promise<DiscoveredProject[]> =>
+    ipcRenderer.invoke('git:unconfigured'),
+  /** Drops cached git information, so the next read is fresh. */
+  refreshGit: (): Promise<void> => ipcRenderer.invoke('git:refresh'),
 
   /** Who holds each of a project's busy ports. Empty when it can start. */
   inspectPorts: (id: string): Promise<PortConflict[]> => ipcRenderer.invoke('ports:inspect', id),

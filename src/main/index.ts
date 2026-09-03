@@ -7,6 +7,7 @@ import type {
   DiscoveredProject,
   LogQuery,
   PortConflict,
+  ProjectGit,
   ProjectConfig,
   RunnerConfig,
   SaveConfigResult
@@ -14,9 +15,10 @@ import type {
 import { configPath, expandPath, loadConfig, newProject, readConfigRaw, validateConfig, writeConfig } from './config.js'
 import { ProcessManager } from './process-manager.js'
 import { Orchestrator } from './orchestrator.js'
-import { defaultRoots, fallbackCommand, scan, tildify } from './discovery.js'
+import { defaultRoots, fallbackCommand, inspect, scan, tildify } from './discovery.js'
 import { LogStore } from './log-store.js'
 import { classify, killOwner } from './port-conflict.js'
+import { forgetRepos, repoInfo } from './git.js'
 import { isPortFree, waitForPortsFree } from './ports.js'
 
 let mainWindow: BrowserWindow | null = null
@@ -97,6 +99,7 @@ function adopt(next: RunnerConfig): void {
   const live = new Set(config.projects.map((p) => p.id))
   manager.prune(live)
   logs.prune(live)
+  forgetRepos()
   send('config:changed', config)
   // A project may have just gained or lost a port list.
   refreshPorts()
@@ -209,6 +212,63 @@ function registerIpc(): void {
     const project = findProject(id)
     if (project) await manager.restart(project)
   })
+
+  // --- git ---------------------------------------------------------------
+
+  /**
+   * Places every project in its repository.
+   *
+   * Repositories are identified by their common git directory rather than
+   * their path, so two worktrees of one repo are recognised as the same
+   * repository even though they are different directories.
+   */
+  ipcMain.handle('git:projects', async (): Promise<ProjectGit[]> =>
+    Promise.all(
+      config.projects.map(async (project) => {
+        const repo = await repoInfo(project.cwd ?? project.path)
+        const here = expandPath(project.cwd ?? project.path)
+        return {
+          projectId: project.id,
+          repo,
+          worktree: repo?.worktrees.find((w) => w.path === here) ?? null
+        }
+      })
+    )
+  )
+
+  /**
+   * Worktrees of projects you already have, that are not themselves configured.
+   *
+   * This is the discoverable half: having added one checkout of a repository,
+   * the others are exactly the things you are most likely to want next.
+   */
+  ipcMain.handle('git:unconfigured', async (): Promise<DiscoveredProject[]> => {
+    const configured = new Set(config.projects.map((p) => expandPath(p.cwd ?? p.path)))
+    const seen = new Set<string>()
+    const found: DiscoveredProject[] = []
+
+    for (const project of config.projects) {
+      const repo = await repoInfo(project.cwd ?? project.path)
+      if (!repo) continue
+      for (const worktree of repo.worktrees) {
+        if (configured.has(worktree.path) || seen.has(worktree.path)) continue
+        seen.add(worktree.path)
+        const detected = inspect(worktree.path)
+        if (!detected) continue
+        // Every checkout of a repository shares one package.json, so the name
+        // in it is the same for all of them. The directory is what actually
+        // tells two worktrees apart, so it wins here — unlike a plain folder
+        // scan, where the package name is the better answer.
+        found.push({
+          ...detected,
+          name: worktree.path.split('/').filter(Boolean).pop() ?? detected.name
+        })
+      }
+    }
+    return found
+  })
+
+  ipcMain.handle('git:refresh', () => forgetRepos())
 
   // --- port conflicts ----------------------------------------------------
 

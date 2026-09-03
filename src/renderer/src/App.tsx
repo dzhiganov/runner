@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { ProjectConfig, ProjectRuntime, RunnerConfig } from '@shared/types.js'
+import type { ProjectConfig, ProjectGit, ProjectRuntime, RunnerConfig } from '@shared/types.js'
 import { buildTree, type TreeNode } from '@shared/graph.js'
 import TerminalHost from './components/TerminalHost.js'
 import ConfigEditor from './components/ConfigEditor.js'
@@ -13,6 +13,7 @@ import {
   ExternalLinkIcon,
   LayersIcon,
   PlayIcon,
+  BranchIcon,
   ListIcon,
   SearchIcon,
   SpinnerIcon,
@@ -84,6 +85,8 @@ export default function App(): React.JSX.Element {
   const [showLogs, setShowLogs] = useState(false)
   /** Project whose port conflict is being resolved, if any. */
   const [conflictFor, setConflictFor] = useState<string | null>(null)
+  /** Repository and worktree per project, keyed by project id. */
+  const [gitInfo, setGitInfo] = useState<Record<string, ProjectGit>>({})
   const [now, setNow] = useState(() => Date.now())
   const [dragId, setDragId] = useState<string | null>(null)
   const [dropId, setDropId] = useState<string | null>(null)
@@ -124,6 +127,29 @@ export default function App(): React.JSX.Element {
     const timer = window.setInterval(() => setNow(Date.now()), 1000)
     return () => window.clearInterval(timer)
   }, [])
+
+  // Git is read on its own slow cycle rather than with the runtime updates:
+  // shelling out to git is far more expensive than anything else the sidebar
+  // does, and a branch changes on a human timescale, not a per-second one.
+  useEffect(() => {
+    let stopped = false
+    const read = (): void => {
+      window.runner.getProjectGit().then((list) => {
+        if (!stopped) setGitInfo(Object.fromEntries(list.map((entry) => [entry.projectId, entry])))
+      })
+    }
+    read()
+    const timer = window.setInterval(read, 10_000)
+    const onFocus = (): void => {
+      void window.runner.refreshGit().then(read)
+    }
+    window.addEventListener('focus', onFocus)
+    return () => {
+      stopped = true
+      window.clearInterval(timer)
+      window.removeEventListener('focus', onFocus)
+    }
+  }, [config])
 
   useEffect(() => {
     try {
@@ -224,6 +250,29 @@ export default function App(): React.JSX.Element {
       .join(' · ')
   }
 
+  /**
+   * The branch a project is on, or null when it is not in a repository.
+   *
+   * A detached head has no branch name, so the short commit stands in — it is
+   * still the answer to "which code is this", which is what the row is for.
+   */
+  const branchOf = (id: string): string | null => {
+    const worktree = gitInfo[id]?.worktree
+    if (!worktree) return null
+    if (worktree.branch) return worktree.branch
+    return worktree.head ? `detached at ${worktree.head.slice(0, 7)}` : null
+  }
+
+  /** Names the repository a project belongs to, for the branch tooltip. */
+  const branchTitle = (id: string): string => {
+    const info = gitInfo[id]
+    if (!info?.repo) return ''
+    const siblings = info.repo.worktrees.length
+    return siblings > 1
+      ? `${info.repo.name} — ${siblings} worktrees`
+      : info.repo.name
+  }
+
   const renderNode = (node: TreeNode, isRoot: boolean): React.JSX.Element => {
     const { project } = node
     const runtime = runtimeFor(project.id)
@@ -313,7 +362,15 @@ export default function App(): React.JSX.Element {
               )}
               {runtime.status === 'running' && <span className="dot running" />}
             </div>
-            <div className="project-meta truncate">{metaFor(runtime)}</div>
+            <div className="project-meta truncate">
+              {branchOf(project.id) && (
+                <span className="branch" title={branchTitle(project.id)}>
+                  <BranchIcon size={10} />
+                  {branchOf(project.id)}
+                </span>
+              )}
+              {metaFor(runtime)}
+            </div>
           </div>
 
           {live && ports.length > 0 && (

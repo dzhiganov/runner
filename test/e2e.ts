@@ -16,8 +16,9 @@ import { parseListeners, sweep } from '../src/main/processes.js'
 import { score } from '../src/shared/fuzzy.js'
 import { decide } from '../src/shared/notify-rules.js'
 import { parsePs, descendants, summarise } from '../src/main/resources.js'
+import { group, LOOSE } from '../src/shared/environment.js'
 import { buildTree, dependentsOf, findCycles, startOrder } from '../src/shared/graph.js'
-import type { ProjectConfig, ProjectRuntime } from '../src/shared/types.js'
+import type { ProjectConfig, ProjectGit, ProjectRuntime, RepoInfo } from '../src/shared/types.js'
 
 /** Run from the repo root via `npm test`. */
 const APP = join(process.cwd(), 'test', 'fixtures', 'fake-app')
@@ -461,6 +462,83 @@ async function main(): Promise<void> {
   const cachedSelf = await repoInfo(process.cwd())
   check('a repeated read is served from cache with the same answer', cachedSelf?.name === self?.name)
   check('a different directory is not served the first one\'s answer', (await repoInfo('/tmp')) === null)
+
+  // --- environment grouping ----------------------------------------------
+  const envProjects: ProjectConfig[] = [
+    { id: 'a', name: 'consumer-app', path: '/repos/app', runCommand: 'x' },
+    { id: 'b', name: 'consumer-gc', path: '/repos/app-gc', runCommand: 'x' },
+    { id: 'c', name: 'api', path: '/repos/api', runCommand: 'x' },
+    { id: 'd', name: 'scratch', path: '/tmp/scratch', runCommand: 'x' }
+  ]
+  const repoOf = (name: string, root: string, common: string): RepoInfo => ({
+    name,
+    root,
+    commonDir: common,
+    worktrees: []
+  })
+  const envGit: Record<string, ProjectGit> = {
+    a: {
+      projectId: 'a',
+      repo: repoOf('consumer-app', '/repos/app', '/repos/app/.git'),
+      worktree: { path: '/repos/app', head: 'aaa', branch: 'main', detached: false, locked: false },
+      status: { branch: 'main', detached: false, ahead: 0, behind: 0, changed: 0, untracked: 0, clean: true }
+    },
+    b: {
+      projectId: 'b',
+      // Same repository — different directory, same common dir.
+      repo: repoOf('consumer-app', '/repos/app', '/repos/app/.git'),
+      worktree: { path: '/repos/app-gc', head: 'aaa', branch: 'feat/GC-123', detached: false, locked: false },
+      status: { branch: 'feat/GC-123', detached: false, ahead: 2, behind: 0, changed: 3, untracked: 1, clean: false }
+    },
+    c: {
+      projectId: 'c',
+      repo: repoOf('api', '/repos/api', '/repos/api/.git'),
+      worktree: { path: '/repos/api', head: 'bbb', branch: 'trunk', detached: false, locked: false },
+      status: null
+    },
+    d: { projectId: 'd', repo: null, worktree: null, status: null }
+  }
+
+  const grouped = group(envProjects, envGit)
+  check('one group per repository, plus the leftovers', grouped.length === 3, `${grouped.length}`)
+  const consumer = grouped.find((g) => g.name === 'consumer-app')
+  check(
+    'two worktrees of one repository are one group',
+    consumer?.worktrees.length === 2,
+    `${consumer?.worktrees.length}`
+  )
+  check(
+    'each worktree keeps its own branch',
+    consumer?.worktrees.map((w) => w.branch).sort().join() === 'feat/GC-123,main'
+  )
+  check(
+    'repositories sort by name',
+    grouped[0].name === 'api' && grouped[1].name === 'consumer-app',
+    grouped.map((g) => g.name).join(' → ')
+  )
+  const ungrouped = grouped.find((g) => g.key === LOOSE)
+  check(
+    'a project in no repository is kept, not dropped',
+    ungrouped?.worktrees[0].projects[0].id === 'd'
+  )
+  check('the ungrouped bucket sorts last', grouped[grouped.length - 1].key === LOOSE)
+
+  // The worktree listing is cached far longer than status, so after a checkout
+  // it is the stale one. Status must win.
+  const stale = group([envProjects[0]], {
+    a: {
+      ...envGit.a,
+      worktree: { path: '/repos/app', head: 'aaa', branch: 'old-branch', detached: false, locked: false },
+      status: { branch: 'new-branch', detached: false, ahead: 0, behind: 0, changed: 0, untracked: 0, clean: true }
+    }
+  })
+  check(
+    'the live status branch wins over the cached worktree listing',
+    stale[0].worktrees[0].branch === 'new-branch',
+    `${stale[0].worktrees[0].branch}`
+  )
+
+  check('no projects means no groups', group([], {}).length === 0)
 
   // --- resource sampling -------------------------------------------------
   // Regression: `pcpu` is printed with the locale's decimal separator. On a

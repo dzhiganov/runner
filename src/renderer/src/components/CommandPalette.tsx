@@ -139,6 +139,7 @@ export function buildCommands(
   actions: {
     select: (id: string) => void
     openLogs: () => void
+    openEnvironment: () => void
     openDiscovery: () => void
     openEditor: (id?: string) => void
     openConflict: (id: string) => void
@@ -146,6 +147,7 @@ export function buildCommands(
 ): Command[] {
   const commands: Command[] = [
     { id: 'logs', title: 'Open all logs', hint: 'View', run: actions.openLogs },
+    { id: 'env', title: 'Open the environment view', hint: 'View', run: actions.openEnvironment },
     { id: 'discover', title: 'Find projects on disk', hint: 'Projects', run: actions.openDiscovery },
     { id: 'edit', title: 'Edit configuration', hint: 'Projects', run: () => actions.openEditor() },
     {

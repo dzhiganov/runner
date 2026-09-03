@@ -292,6 +292,35 @@ apart.
 
 ---
 
+## The environment at a glance
+
+**Environment** in the sidebar puts the whole local setup on one screen,
+grouped by repository and then by worktree:
+
+```text
+api                                    ~/repos/api
+🌿 trunk  clean
+  ● api            :4993   External
+
+consumer-app                           ~/repos/consumer-app
+🌿 main  clean
+  ● consumer-app     —     stopped
+🌿 feat/GC-123  ✎2
+  ● consumer-gc    :4991   Runner    0% · 41 MB
+
+4 projects · 2 repositories · 1 running · 12% cpu · 1.2 GB
+```
+
+It answers, without clicking anything: what code am I working on, what has
+changed, what branch is it, what is running, who started it, and on which
+ports. Clicking a service opens its terminal.
+
+Two worktrees of one repository appear under it rather than as unrelated
+projects. Projects that are not in a repository at all still appear, in a
+bucket at the end — they are perfectly valid, just not part of that structure.
+
+---
+
 ## Reading the logs
 
 Each project has its own terminal, which is the right tool for interacting with

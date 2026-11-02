@@ -1457,13 +1457,18 @@ async function main(): Promise<void> {
     runCommand: 'npm run dev',
     port: [3021],
     autoOpen: true,
-    protocol: 'https'
+    protocol: 'https',
+    startUrl: '/welcome?port={port}'
   }
   await openManager.start(openProject)
   const didOpen = await waitFor(() => opened.length > 0)
   if (didOpen) servingWhenOpened = !(await isPortFree(3021))
   check('auto-open fires once the project is up', didOpen, opened.join(','))
-  check('auto-open uses the configured protocol and port', opened[0] === 'https://localhost:3021', opened[0])
+  check(
+    'auto-open uses the configured protocol, port and start URL',
+    opened[0] === 'https://localhost:3021/welcome?port=3021',
+    opened[0]
+  )
   check('auto-open waited for the port to answer', servingWhenOpened === true)
   await openManager.stopAll()
 

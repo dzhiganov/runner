@@ -4,6 +4,7 @@ import { userInfo } from 'node:os'
 import { platform } from 'node:process'
 import * as pty from 'node-pty'
 import type { ProjectConfig, ProjectRuntime } from '../shared/types.js'
+import { projectUrl } from '../shared/url.js'
 import { expandPath } from './paths.js'
 import { anyPortFree, isPortServing, resolvePort, waitForPortsFree } from './ports.js'
 
@@ -72,11 +73,6 @@ export function defaultShell(): string {
     // userInfo throws if the passwd entry cannot be read.
   }
   return process.env.SHELL || '/bin/zsh'
-}
-
-/** The URL Runner would open for a project running on `port`. */
-export function urlFor(project: ProjectConfig, port: number): string {
-  return `${project.protocol ?? 'http'}://localhost:${port}`
 }
 
 /**
@@ -367,7 +363,7 @@ export class ProcessManager extends EventEmitter<ProcessManagerEvents> {
       const runtime = this.runtime(project.id)
       const port = runtime.detectedPorts[0] ?? runtime.port
       if (port !== null && (await isPortServing(port))) {
-        const url = urlFor(project, port)
+        const url = projectUrl(project, port)
         this.write(project.id, `\x1b[90m› opening ${url}\x1b[0m\r\n`)
         this.emit('open', project.id, url)
         return

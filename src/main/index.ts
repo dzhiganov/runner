@@ -27,6 +27,7 @@ import { Notifier } from './notify.js'
 import { sample } from './resources.js'
 import { Watcher } from './watcher.js'
 import { isPortFree, waitForPortsFree } from './ports.js'
+import { isWebUrl } from '../shared/url.js'
 
 let mainWindow: BrowserWindow | null = null
 let config: RunnerConfig = { projects: [] }
@@ -123,6 +124,19 @@ function findProject(id: string): ProjectConfig | undefined {
   return config.projects.find((p) => p.id === id)
 }
 
+/**
+ * The one way out to the browser. Every URL arriving here came from the
+ * renderer, a link in a dev server's output or the config, and the OS opener
+ * would happily launch whatever app a `file:` or custom-scheme URL names.
+ */
+async function openInBrowser(url: string): Promise<void> {
+  if (!isWebUrl(url)) {
+    console.warn('Refusing to open a non-web URL:', url)
+    return
+  }
+  await shell.openExternal(url)
+}
+
 function send(channel: string, ...args: unknown[]): void {
   if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(channel, ...args)
 }
@@ -146,7 +160,7 @@ function createWindow(): void {
   mainWindow.on('ready-to-show', () => mainWindow?.show())
 
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    shell.openExternal(url)
+    void openInBrowser(url)
     return { action: 'deny' }
   })
 
@@ -179,7 +193,7 @@ manager.on('runtime', (runtime) => {
 logs.on('line', (line) => send('logs:line', line))
 // Auto-open is decided in the process manager, which watches the port; the
 // browser itself is the main process's to reach.
-manager.on('open', (_projectId, url) => void shell.openExternal(url))
+manager.on('open', (_projectId, url) => void openInBrowser(url))
 
 /** Applies a validated config and tells everyone about it. */
 function adopt(next: RunnerConfig): void {
@@ -452,7 +466,7 @@ function registerIpc(): void {
     manager.resize(id, cols, rows)
   )
 
-  ipcMain.handle('shell:openExternal', (_event, url: string) => shell.openExternal(url))
+  ipcMain.handle('shell:openExternal', (_event, url: string) => openInBrowser(url))
 
   ipcMain.handle('shell:openPath', (_event, path: string) =>
     shell.openPath(expandPath(path))

@@ -6,6 +6,7 @@ import type {
   RunnerConfig
 } from '@shared/types.js'
 import { startOrder } from '@shared/graph.js'
+import { startUrlProblem } from '@shared/url.js'
 import { BoxIcon } from './Icons.js'
 
 /** Matches the process manager's own fallbacks, so the form shows the truth. */
@@ -230,6 +231,8 @@ export default function ConfigEditor({ config, initialId, onClose, onSaved }: Pr
         if (!next[key]?.trim()) delete next[key]
       }
       if (next.protocol === 'http') delete next.protocol
+      if (next.startUrl?.trim()) next.startUrl = next.startUrl.trim()
+      else delete next.startUrl
       return next
     })
 
@@ -263,6 +266,7 @@ export default function ConfigEditor({ config, initialId, onClose, onSaved }: Pr
   }
 
   const portError = selected ? textToPorts(portValue).error : null
+  const startUrlError = selected ? startUrlProblem(selected.startUrl ?? '') : null
 
   return (
     <div className="overlay" onMouseDown={onClose}>
@@ -494,6 +498,19 @@ export default function ConfigEditor({ config, initialId, onClose, onSaved }: Pr
                     </select>
                     <small className="hint">
                       Scheme used by the ↗ link next to a running project.
+                    </small>
+                  </label>
+
+                  <label className="field">
+                    <span>Start URL</span>
+                    <input
+                      value={selected.startUrl ?? ''}
+                      onChange={(e) => update(selected.id, { startUrl: e.target.value })}
+                      placeholder="/"
+                    />
+                    <small className={startUrlError ? 'hint error' : 'hint'}>
+                      {startUrlError ??
+                        'Where the ↗ link opens: a path like /dashboard, or a full URL. {port} is the running port.'}
                     </small>
                   </label>
 

@@ -133,6 +133,39 @@ export function migrate(raw: unknown): unknown {
   }
 }
 
+/**
+ * Removes `startUrl` values that would fail validation, saying which.
+ *
+ * Only for loading. A config that fails validation on load leaves the app
+ * with no projects, and the next save writes that emptiness over the file —
+ * far too high a price for one mistyped link in a hand-edited file. Losing the
+ * link instead costs nothing but a browser opening at the root. Saving still
+ * validates strictly, so the form and the raw editor keep saying what is wrong.
+ */
+export function dropInvalidStartUrls(raw: unknown): {
+  raw: unknown
+  dropped: ConfigValidationIssue[]
+} {
+  if (typeof raw !== 'object' || raw === null) return { raw, dropped: [] }
+  const projects = (raw as Record<string, unknown>).projects
+  if (!Array.isArray(projects)) return { raw, dropped: [] }
+
+  const dropped: ConfigValidationIssue[] = []
+  const next = projects.map((entry, index) => {
+    if (typeof entry !== 'object' || entry === null || Array.isArray(entry)) return entry
+    const { startUrl, ...rest } = entry as Record<string, unknown>
+    if (startUrl === undefined || startUrl === null) return entry
+    const problem =
+      typeof startUrl === 'string' ? startUrlProblem(startUrl) : '`startUrl` must be a string.'
+    if (!problem) return entry
+    dropped.push({ path: `projects[${index}].startUrl`, message: problem })
+    return rest
+  })
+  return dropped.length
+    ? { raw: { ...(raw as Record<string, unknown>), projects: next }, dropped }
+    : { raw, dropped }
+}
+
 /** The command an old Docker project was effectively running, as plain text. */
 function composeCommand(docker: unknown): string {
   const d = (typeof docker === 'object' && docker !== null ? docker : {}) as Record<string, unknown>

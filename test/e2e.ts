@@ -6,7 +6,7 @@ import { tmpdir, userInfo } from 'node:os'
 import { ProcessManager, defaultShell } from '../src/main/process-manager.js'
 import { Orchestrator } from '../src/main/orchestrator.js'
 import { resolvePort, isPortFree, waitForPort, waitForPortsFree } from '../src/main/ports.js'
-import { migrate, validateConfig } from '../src/main/config-validate.js'
+import { dropInvalidStartUrls, migrate, validateConfig } from '../src/main/config-validate.js'
 import { fallbackCommand, inspect, scan, tildify } from '../src/main/discovery.js'
 import { LogStore, levelOf } from '../src/main/log-store.js'
 import { whoHolds, groupIsSafeToKill } from '../src/main/port-owner.js'
@@ -1136,6 +1136,40 @@ async function main(): Promise<void> {
     'migration carries startUrl through',
     legacy.ok && legacy.config.projects[1].startUrl === '/admin'
   )
+
+  // One mistyped link in a hand-edited file must not cost every project: a
+  // config that fails on load leaves the app empty, and the next save writes
+  // that over the file.
+  const handEdited = {
+    projects: [
+      { id: 'a', name: 'a', path: '~/a', runCommand: 'c', startUrl: '/fine' },
+      { id: 'b', name: 'b', path: '~/b', runCommand: 'c', startUrl: 'dashboard' },
+      { id: 'c', name: 'c', path: '~/c', runCommand: 'c', startUrl: 42 }
+    ]
+  }
+  const salvaged = dropInvalidStartUrls(migrate(handEdited))
+  const salvagedConfig = validateConfig(salvaged.raw)
+  check(
+    'an invalid startUrl on load is dropped and the other projects survive',
+    salvagedConfig.ok &&
+      salvagedConfig.config.projects.map((p) => p.name).join(',') === 'a,b,c' &&
+      salvagedConfig.config.projects[0].startUrl === '/fine' &&
+      !('startUrl' in salvagedConfig.config.projects[1]) &&
+      !('startUrl' in salvagedConfig.config.projects[2]),
+    salvagedConfig.ok ? '' : JSON.stringify(salvagedConfig.issues)
+  )
+  check(
+    'each dropped startUrl is named in a warning',
+    salvaged.dropped.map((issue) => issue.path).join(',') ===
+      'projects[1].startUrl,projects[2].startUrl'
+  )
+  const cleanConfig = { projects: [handEdited.projects[0]] }
+  const untouched = dropInvalidStartUrls(cleanConfig)
+  check(
+    'a config with nothing to drop is passed through untouched',
+    untouched.raw === cleanConfig && untouched.dropped.length === 0
+  )
+  check('saving still rejects an invalid startUrl', !validateConfig(handEdited).ok)
 
   const keptCommand = migrate({
     projects: [{ name: 'x', path: '~/x', kind: 'docker', runCommand: 'docker compose up db' }]

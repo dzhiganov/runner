@@ -201,8 +201,8 @@ export function buildCommands(
     const ports = live
       ? (runtime.detectedPorts.length ? runtime.detectedPorts : runtime.port === null ? [] : [runtime.port])
       : (externals[project.id]?.ports ?? [])
-    for (const port of ports.slice(0, 3)) {
-      const url = projectUrl(project, port)
+    for (const [index, port] of ports.slice(0, 3).entries()) {
+      const url = projectUrl(project, port, index === 0)
       commands.push({
         id: `open-url:${project.id}:${port}`,
         title: `Open ${at} in the browser`,

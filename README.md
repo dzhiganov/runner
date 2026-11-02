@@ -156,9 +156,10 @@ seconds it says so and opens nothing.
 `startUrl` says where on that port to go. A path such as `/admin?debug=1` is
 appended to it; a full URL such as `http://app.localhost:{port}/login` replaces
 it, and its own scheme wins over `protocol`. `{port}` and `$PORT` are filled in
-with the running port. Every link to the project uses it — the ↗ in the
-sidebar, the toolbar, the palette, the environment view. Without it, links go to
-the root of the port.
+with the running port. Every link to the project's main port uses it — the ↗
+in the sidebar, the toolbar, the palette, the environment view. Any further
+ports a command announces open at their root, since the start URL describes the
+main server. Without it, links go to the root of the port.
 
 ---
 

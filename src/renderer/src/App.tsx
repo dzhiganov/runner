@@ -676,23 +676,27 @@ export default function App(): React.JSX.Element {
                     : externals[active.id].ports
                   )
                     .slice(0, 4)
-                    .map((port) => (
-                      <button
-                        key={port}
-                        className="btn ghost link"
-                        title={`Open ${projectUrl(active, port)} — right-click to copy`}
-                        onClick={() => window.runner.openExternal(projectUrl(active, port))}
-                        onContextMenu={(e) => {
-                          e.preventDefault()
-                          void navigator.clipboard.writeText(projectUrl(active, port))
-                          setCopied(port)
-                          window.setTimeout(() => setCopied(null), 1200)
-                        }}
-                      >
-                        {copied === port ? 'copied' : `:${port}`}{' '}
-                        <ExternalLinkIcon size={11} />
-                      </button>
-                    ))}
+                    .map((port, index) => {
+                      // The start URL is the main server's; extra ports open at their root.
+                      const url = projectUrl(active, port, index === 0)
+                      return (
+                        <button
+                          key={port}
+                          className="btn ghost link"
+                          title={`Open ${url} — right-click to copy`}
+                          onClick={() => window.runner.openExternal(url)}
+                          onContextMenu={(e) => {
+                            e.preventDefault()
+                            void navigator.clipboard.writeText(url)
+                            setCopied(port)
+                            window.setTimeout(() => setCopied(null), 1200)
+                          }}
+                        >
+                          {copied === port ? 'copied' : `:${port}`}{' '}
+                          <ExternalLinkIcon size={11} />
+                        </button>
+                      )
+                    })}
                 <button className="btn ghost" onClick={() => window.runner.openPath(active.path)}>
                   Folder
                 </button>

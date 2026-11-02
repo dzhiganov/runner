@@ -8,6 +8,7 @@ import type {
   RunnerConfig
 } from '../shared/types.js'
 import { findCycles } from '../shared/graph.js'
+import { startUrlProblem } from '../shared/url.js'
 
 function readReadiness(
   raw: unknown,
@@ -325,6 +326,17 @@ export function validateConfig(
       }
     }
 
+    let startUrl: string | undefined
+    if (p.startUrl !== undefined && p.startUrl !== null) {
+      if (typeof p.startUrl !== 'string') {
+        issues.push({ path: `${at}.startUrl`, message: '`startUrl` must be a string.' })
+      } else {
+        const problem = startUrlProblem(p.startUrl)
+        if (problem) issues.push({ path: `${at}.startUrl`, message: problem })
+        else if (p.startUrl.trim()) startUrl = p.startUrl.trim()
+      }
+    }
+
     for (const key of ['shell', 'cwd'] as const) {
       if (p[key] !== undefined && p[key] !== null && typeof p[key] !== 'string') {
         issues.push({ path: `${at}.${key}`, message: `\`${key}\` must be a string.` })
@@ -346,6 +358,7 @@ export function validateConfig(
       ...(watchFiles ? { watch: true } : {}),
       ...(autoRestart ? { autoRestart } : {}),
       ...(protocol ? { protocol } : {}),
+      ...(startUrl ? { startUrl } : {}),
       ...(env && Object.keys(env).length ? { env } : {}),
       ...(typeof p.shell === 'string' && p.shell.trim() ? { shell: p.shell.trim() } : {}),
       ...(typeof p.cwd === 'string' && p.cwd.trim() ? { cwd: p.cwd.trim() } : {})

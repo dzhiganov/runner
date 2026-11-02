@@ -56,6 +56,13 @@ export interface ProjectConfig {
   autoRestart?: AutoRestartConfig
   /** Scheme used when opening the project in a browser. Defaults to http. */
   protocol?: 'http' | 'https'
+  /**
+   * Where opening the project in a browser goes. A path (`/dashboard`) is
+   * appended to the running port; a full URL (`http://app.localhost:{port}/`)
+   * replaces it, and its own scheme wins over `protocol`. `{port}` and `$PORT`
+   * stand for the running port. Defaults to the root of the port.
+   */
+  startUrl?: string
   /** Extra environment variables merged on top of the inherited environment. */
   env?: Record<string, string>
   /** Shell used to run `runCommand`. Defaults to the user's login shell. */

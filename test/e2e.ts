@@ -17,6 +17,7 @@ import { score } from '../src/shared/fuzzy.js'
 import { decide } from '../src/shared/notify-rules.js'
 import { parsePs, descendants, summarise } from '../src/main/resources.js'
 import { group, LOOSE } from '../src/shared/environment.js'
+import { projectUrl, startUrlProblem } from '../src/shared/url.js'
 import { isInteresting, Watcher } from '../src/main/watcher.js'
 import { buildTree, dependentsOf, findCycles, startOrder } from '../src/shared/graph.js'
 import type { ProjectConfig, ProjectGit, ProjectRuntime, RepoInfo } from '../src/shared/types.js'
@@ -1116,6 +1117,26 @@ async function main(): Promise<void> {
     migratedContainer.ok ? '' : JSON.stringify(migratedContainer.issues)
   )
 
+  const legacy = validateConfig(
+    migrate({
+      projects: [
+        { id: 'old', name: 'old', path: '~/x', runCommand: 'c', port: [3000], protocol: 'https' },
+        { name: 'kept', path: '~/y', runCommand: 'c', startUrl: '/admin' }
+      ]
+    })
+  )
+  check(
+    'a config from before startUrl still loads and opens the root',
+    legacy.ok &&
+      !('startUrl' in legacy.config.projects[0]) &&
+      projectUrl(legacy.config.projects[0], 3000) === 'https://localhost:3000',
+    legacy.ok ? '' : JSON.stringify(legacy.issues)
+  )
+  check(
+    'migration carries startUrl through',
+    legacy.ok && legacy.config.projects[1].startUrl === '/admin'
+  )
+
   const keptCommand = migrate({
     projects: [{ name: 'x', path: '~/x', kind: 'docker', runCommand: 'docker compose up db' }]
   }) as { projects: { runCommand: string }[] }
@@ -1170,6 +1191,62 @@ async function main(): Promise<void> {
     projects: [{ name: 'a', path: '~/x', runCommand: 'c', autoOpen: 'yes' }]
   })
   check('a non-boolean autoOpen is rejected', !badAutoOpen.ok)
+
+  // --- start URL ---------------------------------------------------------
+  check('no start URL opens the root of the port', projectUrl({}, 3000) === 'http://localhost:3000')
+  check(
+    'a start URL path is appended to the port',
+    projectUrl({ protocol: 'https', startUrl: '/admin?debug=1' }, 4200) ===
+      'https://localhost:4200/admin?debug=1'
+  )
+  check(
+    'a full start URL replaces the root, port placeholder filled in',
+    projectUrl({ protocol: 'https', startUrl: 'http://app.localhost:{port}/login' }, 4200) ===
+      'http://app.localhost:4200/login'
+  )
+  check(
+    '`$PORT` works as a placeholder too',
+    projectUrl({ startUrl: '/proxy/$PORT/{PORT}' }, 4200) === 'http://localhost:4200/proxy/4200/4200'
+  )
+  check(
+    'a start URL that is neither a path nor a URL falls back to the root',
+    projectUrl({ startUrl: 'dashboard' }, 3000) === 'http://localhost:3000'
+  )
+  check(
+    'paths and full URLs are accepted as start URLs',
+    ['', '  ', '/', '/dashboard', '/admin?debug=1#top', 'https://app.test/', 'http://app.localhost:$PORT/x']
+      .every((value) => startUrlProblem(value) === null)
+  )
+  check(
+    'anything else is refused as a start URL',
+    ['dashboard', 'localhost:3000/x', 'ftp://host/', '/a b', 'http://', 'http://{host}:{port}/', '/{prot}']
+      .every((value) => startUrlProblem(value) !== null)
+  )
+
+  const withStart = validateConfig({
+    projects: [{ name: 'a', path: '~/x', runCommand: 'c', startUrl: '  /dashboard  ' }]
+  })
+  check(
+    'startUrl survives validation, trimmed',
+    withStart.ok && withStart.config.projects[0].startUrl === '/dashboard',
+    withStart.ok ? '' : JSON.stringify(withStart.issues)
+  )
+  const blankStart = validateConfig({
+    projects: [{ name: 'a', path: '~/x', runCommand: 'c', startUrl: ' ' }]
+  })
+  check('a blank startUrl leaves nothing behind', blankStart.ok && !('startUrl' in blankStart.config.projects[0]))
+  const badStart = validateConfig({
+    projects: [
+      { name: 'a', path: '~/x', runCommand: 'c', startUrl: 'dashboard' },
+      { name: 'b', path: '~/y', runCommand: 'c', startUrl: 42 }
+    ]
+  })
+  check(
+    'an invalid startUrl is rejected, naming the field',
+    !badStart.ok &&
+      badStart.issues.some((issue) => issue.path === 'projects[0].startUrl') &&
+      badStart.issues.some((issue) => issue.path === 'projects[1].startUrl')
+  )
 
   const commandNeedsCommand = validateConfig({ projects: [{ name: 'x', path: '~/x' }] })
   check('a command project still requires runCommand', !commandNeedsCommand.ok)

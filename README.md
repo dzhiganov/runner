@@ -153,6 +153,13 @@ The port it opens is the first one the project announced in its own output,
 falling back to the one Runner assigned. If nothing answers within ninety
 seconds it says so and opens nothing.
 
+`startUrl` says where on that port to go. A path such as `/admin?debug=1` is
+appended to it; a full URL such as `http://app.localhost:{port}/login` replaces
+it, and its own scheme wins over `protocol`. `{port}` and `$PORT` are filled in
+with the running port. Every link to the project uses it — the ↗ in the
+sidebar, the toolbar, the palette, the environment view. Without it, links go to
+the root of the port.
+
 ---
 
 ## Things you started yourself
@@ -482,6 +489,7 @@ key besides `projects`.
 | `autoOpen` | no | Open in the browser once it answers. |
 | `autoRestart` | no | `{ enabled, maxAttempts, delayMs }`, or `true` for the defaults. |
 | `protocol` | no | `http` (default) or `https`, for the browser links. |
+| `startUrl` | no | Path or full URL the browser links open. `{port}` is the running port. |
 | `env` | no | Extra environment variables for the child process. |
 | `shell` | no | Shell to run the command with. Defaults to your login shell. |
 | `cwd` | no | Working directory override. Defaults to `path`. |

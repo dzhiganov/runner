@@ -8,6 +8,7 @@ import type {
   RunnerConfig
 } from '@shared/types.js'
 import { buildTree, type TreeNode } from '@shared/graph.js'
+import { projectUrl } from '@shared/url.js'
 import TerminalHost from './components/TerminalHost.js'
 import ConfigEditor from './components/ConfigEditor.js'
 import DiscoverDialog from './components/DiscoverDialog.js'
@@ -77,10 +78,6 @@ function formatBytes(bytes: number): string {
   const mb = bytes / (1024 * 1024)
   if (mb < 1024) return `${Math.round(mb)} MB`
   return `${(mb / 1024).toFixed(1)} GB`
-}
-
-function urlFor(project: ProjectConfig, port: number): string {
-  return `${project.protocol ?? 'http'}://localhost:${port}`
 }
 
 function elapsed(since: number | null, now: number): string {
@@ -514,10 +511,10 @@ export default function App(): React.JSX.Element {
           {live && ports.length > 0 && (
             <button
               className="btn ghost icon open-link"
-              title={`Open ${urlFor(project, ports[0])}`}
+              title={`Open ${projectUrl(project, ports[0])}`}
               onClick={(e) => {
                 e.stopPropagation()
-                window.runner.openExternal(urlFor(project, ports[0]))
+                window.runner.openExternal(projectUrl(project, ports[0]))
               }}
             >
               <ExternalLinkIcon size={12} />
@@ -683,11 +680,11 @@ export default function App(): React.JSX.Element {
                       <button
                         key={port}
                         className="btn ghost link"
-                        title={`Open ${urlFor(active, port)} — right-click to copy`}
-                        onClick={() => window.runner.openExternal(urlFor(active, port))}
+                        title={`Open ${projectUrl(active, port)} — right-click to copy`}
+                        onClick={() => window.runner.openExternal(projectUrl(active, port))}
                         onContextMenu={(e) => {
                           e.preventDefault()
-                          void navigator.clipboard.writeText(urlFor(active, port))
+                          void navigator.clipboard.writeText(projectUrl(active, port))
                           setCopied(port)
                           window.setTimeout(() => setCopied(null), 1200)
                         }}

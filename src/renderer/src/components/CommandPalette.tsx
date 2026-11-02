@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ExternalProcess, ProjectConfig, ProjectRuntime } from '@shared/types.js'
 import { score } from '@shared/fuzzy.js'
+import { projectUrl } from '@shared/url.js'
 
 export interface Command {
   id: string
@@ -201,7 +202,7 @@ export function buildCommands(
       ? (runtime.detectedPorts.length ? runtime.detectedPorts : runtime.port === null ? [] : [runtime.port])
       : (externals[project.id]?.ports ?? [])
     for (const port of ports.slice(0, 3)) {
-      const url = `${project.protocol ?? 'http'}://localhost:${port}`
+      const url = projectUrl(project, port)
       commands.push({
         id: `open-url:${project.id}:${port}`,
         title: `Open ${at} in the browser`,

@@ -8,6 +8,7 @@ import type {
 } from '@shared/types.js'
 import { AlertIcon, BranchIcon, BoxIcon, ExternalLinkIcon, SpinnerIcon } from './Icons.js'
 import { group, LOOSE } from '@shared/environment.js'
+import { projectUrl } from '@shared/url.js'
 
 interface Props {
   projects: ProjectConfig[]
@@ -135,12 +136,10 @@ export default function EnvironmentView({
                           {ports.length > 0 && (
                             <span
                               className="env-open"
-                              title={`Open :${ports[0]}`}
+                              title={`Open ${projectUrl(project, ports[0])}`}
                               onClick={(e) => {
                                 e.stopPropagation()
-                                void window.runner.openExternal(
-                                  `${project.protocol ?? 'http'}://localhost:${ports[0]}`
-                                )
+                                void window.runner.openExternal(projectUrl(project, ports[0]))
                               }}
                             >
                               <ExternalLinkIcon size={11} />

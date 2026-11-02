@@ -17,7 +17,7 @@ import { score } from '../src/shared/fuzzy.js'
 import { decide } from '../src/shared/notify-rules.js'
 import { parsePs, descendants, summarise } from '../src/main/resources.js'
 import { group, LOOSE } from '../src/shared/environment.js'
-import { projectUrl, startUrlProblem } from '../src/shared/url.js'
+import { isWebUrl, projectUrl, startUrlProblem } from '../src/shared/url.js'
 import { isInteresting, Watcher } from '../src/main/watcher.js'
 import { buildTree, dependentsOf, findCycles, startOrder } from '../src/shared/graph.js'
 import type { ProjectConfig, ProjectGit, ProjectRuntime, RepoInfo } from '../src/shared/types.js'
@@ -1213,14 +1213,45 @@ async function main(): Promise<void> {
     projectUrl({ startUrl: 'dashboard' }, 3000) === 'http://localhost:3000'
   )
   check(
+    'a start URL is encoded for the opener',
+    projectUrl({ startUrl: '/search?q=ü&x=a|b' }, 3000) === 'http://localhost:3000/search?q=%C3%BC&x=a%7Cb',
+    projectUrl({ startUrl: '/search?q=ü&x=a|b' }, 3000)
+  )
+  check(
+    'secondary ports open their root, not the start URL',
+    projectUrl({ startUrl: 'https://app.test/' }, 4300, false) === 'http://localhost:4300'
+  )
+  check(
+    'a start URL with credentials opens the root instead',
+    projectUrl({ startUrl: 'http://localhost:{port}@evil.test/' }, 3000) === 'http://localhost:3000'
+  )
+  check(
     'paths and full URLs are accepted as start URLs',
     ['', '  ', '/', '/dashboard', '/admin?debug=1#top', 'https://app.test/', 'http://app.localhost:$PORT/x']
       .every((value) => startUrlProblem(value) === null)
   )
   check(
     'anything else is refused as a start URL',
-    ['dashboard', 'localhost:3000/x', 'ftp://host/', '/a b', 'http://', 'http://{host}:{port}/', '/{prot}']
+    [
+      'dashboard',
+      'localhost:3000/x',
+      'ftp://host/',
+      '/a b',
+      'http://',
+      'http://{host}:{port}/',
+      '/{prot}',
+      'http://app.localhost:{port}@evil.test/',
+      'https://user:pw@app.test/'
+    ]
       .every((value) => startUrlProblem(value) !== null)
+  )
+
+  check(
+    'only http and https URLs are handed to the browser',
+    isWebUrl('http://localhost:3000/') &&
+      isWebUrl('HTTPS://app.test') &&
+      ['file:///etc/passwd', 'smb://host/share', 'javascript:alert(1)', 'vscode://x', 'not a url', '']
+        .every((url) => !isWebUrl(url))
   )
 
   const withStart = validateConfig({

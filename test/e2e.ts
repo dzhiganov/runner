@@ -3,7 +3,7 @@ import { spawn } from 'node:child_process'
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir, userInfo } from 'node:os'
-import { ProcessManager, defaultShell } from '../src/main/process-manager.js'
+import { ProcessManager, autoOpenTarget, defaultShell } from '../src/main/process-manager.js'
 import { Orchestrator } from '../src/main/orchestrator.js'
 import { resolvePort, isPortFree, waitForPort, waitForPortsFree } from '../src/main/ports.js'
 import { dropInvalidStartUrls, migrate, validateConfig } from '../src/main/config-validate.js'
@@ -1286,6 +1286,35 @@ async function main(): Promise<void> {
       isWebUrl('HTTPS://app.test') &&
       ['file:///etc/passwd', 'smb://host/share', 'javascript:alert(1)', 'vscode://x', 'not a url', '']
         .every((url) => !isWebUrl(url))
+  )
+
+  // What auto-open opens, without needing a port to answer.
+  const opener: ProjectConfig = {
+    id: 'o',
+    name: 'o',
+    path: '~/o',
+    protocol: 'https',
+    startUrl: '/welcome?port={port}'
+  }
+  check(
+    'auto-open targets the assigned port at the start URL',
+    autoOpenTarget(opener, { detectedPorts: [], port: 3021 })?.url ===
+      'https://localhost:3021/welcome?port=3021'
+  )
+  check(
+    'auto-open prefers the first port the project announced',
+    autoOpenTarget(opener, { detectedPorts: [4200, 4300], port: 3021 })?.port === 4200 &&
+      autoOpenTarget(opener, { detectedPorts: [4200, 4300], port: 3021 })?.url ===
+        'https://localhost:4200/welcome?port=4200'
+  )
+  check(
+    'auto-open without a start URL opens the root, as before',
+    autoOpenTarget({ ...opener, startUrl: undefined }, { detectedPorts: [], port: 3021 })?.url ===
+      'https://localhost:3021'
+  )
+  check(
+    'auto-open has nothing to open without a port',
+    autoOpenTarget(opener, { detectedPorts: [], port: null }) === null
   )
 
   const withStart = validateConfig({

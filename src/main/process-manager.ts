@@ -76,6 +76,19 @@ export function defaultShell(): string {
 }
 
 /**
+ * What auto-open waits on and then opens: the first port the project
+ * announced in its own output, falling back to the one Runner assigned, at
+ * the project's start URL. Null while there is no port to wait on.
+ */
+export function autoOpenTarget(
+  project: ProjectConfig,
+  runtime: Pick<ProjectRuntime, 'detectedPorts' | 'port'>
+): { port: number; url: string } | null {
+  const port = runtime.detectedPorts[0] ?? runtime.port
+  return port === null ? null : { port, url: projectUrl(project, port) }
+}
+
+/**
  * Owns every child process. The renderer never touches PTYs directly; it sends
  * intents (start/stop/restart) and receives runtime snapshots plus output.
  */
@@ -360,10 +373,9 @@ export class ProcessManager extends EventEmitter<ProcessManagerEvents> {
         return
       }
 
-      const runtime = this.runtime(project.id)
-      const port = runtime.detectedPorts[0] ?? runtime.port
-      if (port !== null && (await isPortServing(port))) {
-        const url = projectUrl(project, port)
+      const target = autoOpenTarget(project, this.runtime(project.id))
+      if (target && (await isPortServing(target.port))) {
+        const { url } = target
         this.write(project.id, `\x1b[90m› opening ${url}\x1b[0m\r\n`)
         this.emit('open', project.id, url)
         return
